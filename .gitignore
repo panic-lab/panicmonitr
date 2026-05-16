@@ -16,23 +16,20 @@ secret.meta
 log.jsonl
 peers.json
 
-# Legacy artifacts (pre-flat-peer model) — still ignored so a stale tree
-# doesn't dirty the working copy.
-account.key
-account.meta
-device.cert
-mesh.json
-trusted_peers.json
-trusted_accounts.json
-
 # Logs
 *.log
 
 # Runtime databases (per-machine SQLite stores)
 *.db
+*.db-shm
+*.db-wal
 
 # Backup files
 *.bak
+
+# Markdown files
+*.md
+!README.md
 
 # Local agent settings
 .claude/
