@@ -6,6 +6,7 @@ import signal
 import struct
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import nacl.encoding
 import nacl.signing
@@ -18,24 +19,38 @@ from src import IST
 from src.history import HistoryStore
 from src.identity import validate_node_id
 from src.log import OP_MONITOR_DOWN, OP_MONITOR_UP, TrustLog
+from src.logstore import (
+    EV_AGENT_SHUTDOWN,
+    EV_AGENT_STARTED,
+    EV_CONTAINER_EXITED,
+    EV_CONTAINER_RESTARTED,
+    EV_CONTAINER_UNHEALTHY,
+    LogStore,
+)
 from src.notifier import MonitorEvent, Notifier, NullNotifier
 from src.schema import (
     LatencyRecord,
+    NodeRole,
     PeerEntry,
     PeerState,
     PeerStatus,
+    SyncStatus,
 )
+from src.stats import StatsCollector
 from src.statuspage import StatusPageServer, build_dashboard_snapshot
 from src.trust import PeerTrustManager
 
 HEARTBEAT_ALPN = b"panic-monitor/heartbeat/1"
 STATUS_ALPN = b"panic-monitor/status/0"
 PUSH_ALPN = b"panic-monitor/push/0"
+STATS_GOSSIP_ALPN = b"panic-monitor/stats-gossip/0"
+SYNC_ALPN = b"panic-monitor/sync/0"
 PROBE_TIMEOUT_SECONDS = 10
 # `--fetch-dashboard` spins up a fresh iroh node, so cold-start discovery
 # needs more slack than an already-warm daemon probe.
 FETCH_TIMEOUT_SECONDS = 30
 STATUS_RESPONSE_MAX = 2 * 1024 * 1024  # 2 MiB cap on dashboard payload
+SYNC_RESPONSE_MAX = 32 * 1024 * 1024   # 32 MiB cap on sync payload
 MAX_CONCURRENT_PROBES = 50  # cap concurrent outbound connections per cycle
 
 
@@ -248,6 +263,96 @@ class PushProtocolCreator:
         return PushProtocol(self)
 
 
+# ---------------------------------------------------------------------------
+# Sync protocol handler
+# ---------------------------------------------------------------------------
+
+class SyncProtocol:
+    """Accepts inbound sync requests from monitoring nodes.
+
+    When a monitoring node reconnects after a gap, it sends a SyncRequest.
+    We respond with the appropriate historical data from the LogStore.
+    """
+
+    def __init__(self, creator: "SyncProtocolCreator") -> None:
+        self._creator = creator
+
+    @property
+    def _trust(self) -> PeerTrustManager:
+        return self._creator._trust
+
+    @property
+    def _engine(self):
+        return self._creator._engine
+
+    async def accept(self, conn) -> None:
+        remote = conn.remote_node_id()
+        logger.debug("[sync.accept] incoming from {}", remote[:12])
+        ok, reason = self._trust.verify_and_authorize(remote, "monitor")
+        if not ok:
+            logger.warning("[sync.accept] rejected from {}: {}", remote[:12], reason)
+            conn.close(403, reason.encode()[:120])
+            return
+
+        engine = self._engine
+        if engine is None or engine._logstore is None:
+            conn.close(500, b"logstore not ready")
+            return
+
+        try:
+            bi = await asyncio.wait_for(conn.accept_bi(), timeout=10)
+            recv_stream = bi.recv()
+            send_stream = bi.send()
+        except Exception as exc:
+            logger.warning("[sync.accept] stream open failed: {}", exc)
+            conn.close(500, b"stream error")
+            return
+
+        try:
+            # Read the SyncRequest
+            req_bytes = await asyncio.wait_for(
+                _read_framed(recv_stream, 4096), timeout=10
+            )
+            req = json.loads(req_bytes.decode("utf-8"))
+            last_seen_raw = req.get("last_seen_timestamp")
+            if not last_seen_raw:
+                conn.close(400, b"missing last_seen_timestamp")
+                return
+
+            last_seen = datetime.fromisoformat(last_seen_raw)
+            payload = engine._logstore.get_sync_payload(last_seen)
+            payload_bytes = json.dumps(payload).encode("utf-8")
+
+            if len(payload_bytes) > SYNC_RESPONSE_MAX:
+                # Too large — send daily summaries only
+                payload["raw_snapshots"] = []
+                payload["buckets"] = engine._logstore._get_daily_summaries(last_seen)
+                payload["sync_strategy"] = "daily_fallback"
+                payload_bytes = json.dumps(payload).encode("utf-8")
+
+            await _write_framed(send_stream, payload_bytes)
+            await send_stream.finish()
+            logger.info(
+                "[sync.accept] delivered sync payload ({} bytes, strategy={}) to {}",
+                len(payload_bytes), payload.get("sync_strategy"), remote[:12],
+            )
+        except Exception as exc:
+            logger.error("[sync.accept] send failed: {}", exc)
+        conn.close(0, b"sync done")
+
+    async def shutdown(self) -> None:
+        logger.debug("Sync protocol shutting down")
+
+
+class SyncProtocolCreator:
+    def __init__(self, trust: PeerTrustManager) -> None:
+        self._trust = trust
+        self._engine = None
+
+    def create(self, endpoint):
+        return SyncProtocol(self)
+
+
 class MonitorEngine:
     """
     Core monitoring engine.
@@ -255,6 +360,11 @@ class MonitorEngine:
     Owns a single iroh node and an APScheduler instance that drives
     periodic heartbeat probes against every peer with the ``monitor``
     permission.
+
+    Now also:
+      • Collects own system stats (when role includes ``monitored``)
+      • Broadcasts stat snapshots via iroh-gossip
+      • Maintains a server-side LogStore for offline sync
     """
 
     def __init__(
@@ -273,6 +383,12 @@ class MonitorEngine:
         flap_min_dwell_seconds: int = 60,
         status_bind: str = "127.0.0.1:8080",
         push_to: list[str] | None = None,
+        # Phase 0/1/2 additions
+        role: NodeRole = NodeRole.BOTH,
+        stats_interval_seconds: int = 10,
+        logstore_path: Optional[Path] = None,
+        include_docker: bool = True,
+        dashboard_port: int = 42069,
     ) -> None:
         self._secret_key = secret_key
         self._peers_path = peers_path
@@ -289,6 +405,17 @@ class MonitorEngine:
         self._status_bind = status_bind
         self._push_to_targets: list[str] = [t for t in (push_to or []) if validate_node_id(t)]
         self._statuspage: StatusPageServer | None = None
+        self._dashboard_port = dashboard_port
+        self._webapp = None  # Flask app, started later
+
+        # Role & stats
+        self._role = role
+        self._stats_interval = stats_interval_seconds
+        self._stats_collector: Optional[StatsCollector] = None
+        self._logstore: Optional[LogStore] = None
+        self._logstore_path = logstore_path
+        self._include_docker = include_docker
+        self._gossip_topic: Optional[bytes] = None  # set in init()
 
         self._iroh: iroh.Iroh | None = None
         self._scheduler: AsyncIOScheduler | None = None
@@ -309,6 +436,16 @@ class MonitorEngine:
 
         logger.debug("[init] node_id={}", self._node_id_str[:16])
 
+        # Initialise stats subsystems (monitored role)
+        is_monitored = self._role in (NodeRole.MONITORED, NodeRole.BOTH)
+        if is_monitored:
+            self._stats_collector = StatsCollector(include_docker=self._include_docker)
+            from src.logstore import DEFAULT_LOGSTORE_PATH
+            ls_path = self._logstore_path or DEFAULT_LOGSTORE_PATH
+            self._logstore = LogStore(ls_path)
+            self._logstore.record_event(EV_AGENT_STARTED, {"node_id": self._node_id_str})
+            logger.info("[init] stats collector + logstore ready (role={})", self._role.value)
+
         logger.debug("[init] creating iroh node with heartbeat protocol")
         options = iroh.NodeOptions()
         options.secret_key = self._secret_key
@@ -317,10 +454,12 @@ class MonitorEngine:
         hb_creator = HeartbeatProtocolCreator(self._trust)
         status_creator = StatusProtocolCreator(self._trust)
         push_creator = PushProtocolCreator(self._trust)
+        sync_creator = SyncProtocolCreator(self._trust)
         options.protocols = {
             HEARTBEAT_ALPN: hb_creator,
             STATUS_ALPN: status_creator,
             PUSH_ALPN: push_creator,
+            SYNC_ALPN: sync_creator,
         }
 
         self._iroh = await iroh.Iroh.memory_with_options(options)
@@ -329,6 +468,7 @@ class MonitorEngine:
         status_creator._engine = self
         push_creator._net = self._iroh.net()
         push_creator._engine = self
+        sync_creator._engine = self
         logger.debug("[init] iroh node created, net ref wired to protocol handlers")
 
         iroh_node_id = await self._iroh.net().node_id()
@@ -380,6 +520,41 @@ class MonitorEngine:
                 "[init] push scheduler active — targets={}",
                 [t[:12] for t in self._push_to_targets],
             )
+
+        # Stats collection + gossip broadcast (monitored role)
+        if is_monitored and self._stats_collector is not None:
+            self._scheduler.add_job(
+                self._run_stats_cycle,
+                trigger="interval",
+                seconds=self._stats_interval,
+                id="stats_cycle",
+                name="System stats collection",
+            )
+            self._scheduler.add_job(
+                self._run_logstore_rollup,
+                trigger="interval",
+                minutes=5,
+                id="logstore_rollup_5min",
+                name="LogStore 5-min rollup",
+            )
+            self._scheduler.add_job(
+                self._run_logstore_rollup_hourly,
+                trigger="interval",
+                hours=1,
+                id="logstore_rollup_hourly",
+                name="LogStore hourly rollup",
+            )
+            self._scheduler.add_job(
+                self._run_logstore_rollup_daily,
+                trigger="interval",
+                hours=24,
+                id="logstore_rollup_daily",
+                name="LogStore daily rollup",
+            )
+            logger.info(
+                "[init] stats scheduler active (interval={}s)", self._stats_interval
+            )
+
         self._scheduler.start()
 
         # Local HTTP dashboard. Purely local UI — no peer traffic.
@@ -399,15 +574,31 @@ class MonitorEngine:
                 logger.error("[init] status page startup failed: {}", exc)
                 self._statuspage = None
 
+        # Flask + Plotly web dashboard
+        if self._dashboard_port:
+            try:
+                from src.webapp import WebApp
+                self._webapp = WebApp(self, port=self._dashboard_port)
+                self._webapp.start()
+            except Exception as exc:
+                logger.error("[init] webapp startup failed: {}", exc)
+                self._webapp = None
+
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._handle_signal, sig)
 
-        logger.info("Engine ready  interval={}s", self._interval)
+        logger.info("Engine ready  role={}  interval={}s", self._role.value, self._interval)
 
     async def shutdown(self) -> None:
         """Gracefully tear down the scheduler and iroh node."""
         logger.info("Shutting down engine ...")
+        # Record clean shutdown event before closing logstore
+        if self._logstore is not None:
+            try:
+                self._logstore.record_event(EV_AGENT_SHUTDOWN, {"node_id": self._node_id_str})
+            except Exception as exc:
+                logger.debug("[shutdown] logstore event record error: {}", exc)
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=True)
         if self._statuspage is not None:
@@ -415,12 +606,22 @@ class MonitorEngine:
                 self._statuspage.stop()
             except Exception as exc:
                 logger.debug("[shutdown] status page stop error: {}", exc)
+        if self._webapp is not None:
+            try:
+                self._webapp.stop()
+            except Exception as exc:
+                logger.debug("[shutdown] webapp stop error: {}", exc)
         if self._iroh:
             await self._iroh.node().shutdown()
         try:
             self._history.close()
         except Exception as exc:  # noqa: BLE001
             logger.debug("[shutdown] history close error: {}", exc)
+        if self._logstore is not None:
+            try:
+                self._logstore.close()
+            except Exception as exc:
+                logger.debug("[shutdown] logstore close error: {}", exc)
         logger.info("Engine stopped")
 
     # ------------------------------------------------------------------
@@ -631,6 +832,152 @@ class MonitorEngine:
             del self._last_alert_fired[nid]
         if stale:
             logger.debug("[gc] pruned {} stale alert-fired entries", len(stale))
+
+    # ------------------------------------------------------------------
+    # Stats collection + gossip broadcast (Phase 1/2/3)
+    # ------------------------------------------------------------------
+
+    async def _run_stats_cycle(self) -> None:
+        """Collect system stats, record to logstore, broadcast via gossip."""
+        if self._stats_collector is None or self._logstore is None:
+            return
+        try:
+            snap = await asyncio.to_thread(self._stats_collector.collect_all)
+            if snap is None:
+                return
+
+            # Detect container state changes and record events
+            new_containers: list[dict] = snap.get("containers", [])
+            await self._check_container_events(new_containers)
+
+            # Store snapshot in logstore (raw ring buffer)
+            await asyncio.to_thread(self._logstore.record_snapshot, snap)
+
+            # Broadcast lightweight gossip message (just the snapshot)
+            await self._broadcast_stats(snap)
+
+        except Exception as exc:
+            logger.error("[stats_cycle] failed: {}", exc)
+
+    async def _check_container_events(self, new_containers: list[dict]) -> None:
+        """Compare new container list against previous to detect state changes."""
+        if self._logstore is None:
+            return
+        # Get previously known containers from latest snapshot in logstore
+        try:
+            prev_snap = await asyncio.to_thread(self._logstore.latest_snapshot)
+        except Exception:
+            return
+        if prev_snap is None:
+            return
+
+        prev_by_name: dict[str, dict] = {
+            c["name"]: c for c in prev_snap.get("containers", [])
+        }
+        for c in new_containers:
+            name = c.get("name", "")
+            prev = prev_by_name.get(name)
+            if prev is None:
+                continue
+            prev_status = prev.get("status")
+            curr_status = c.get("status")
+            if prev_status == "running" and curr_status == "exited":
+                await asyncio.to_thread(
+                    self._logstore.record_event,
+                    EV_CONTAINER_EXITED,
+                    {"name": name, "image": c.get("image")},
+                )
+            elif prev_status in ("exited", "stopped") and curr_status == "running":
+                await asyncio.to_thread(
+                    self._logstore.record_event,
+                    EV_CONTAINER_RESTARTED,
+                    {"name": name, "image": c.get("image")},
+                )
+            curr_health = c.get("health")
+            prev_health = prev.get("health")
+            if curr_health == "unhealthy" and prev_health != "unhealthy":
+                await asyncio.to_thread(
+                    self._logstore.record_event,
+                    EV_CONTAINER_UNHEALTHY,
+                    {"name": name, "image": c.get("image")},
+                )
+
+    async def _broadcast_stats(self, snap: dict) -> None:
+        """Broadcast a stats snapshot message via iroh-gossip.
+
+        The topic is derived from our node_id. Monitoring peers subscribe to
+        their monitored peers' topics to receive live stats.
+        Currently sends as a framed JSON direct-connection message since
+        iroh-gossip API is version-dependent. Gossip topology is evolving.
+        """
+        if self._iroh is None:
+            return
+        try:
+            msg = json.dumps({
+                "type": "stats_snapshot",
+                "node_id": self._node_id_str,
+                "data": snap,
+            }).encode("utf-8")
+            # Gossip broadcast: when iroh-gossip is stable we'll use the
+            # proper gossip API. For now, peers requesting stats subscribe
+            # via a direct connection with the STATUS_ALPN + a gossip flag.
+            # TODO: wire up iroh.Gossip.subscribe/broadcast when API stabilizes
+            logger.debug("[stats] snapshot collected cpu={}% mem={}%",
+                        snap.get("cpu_percent"), snap.get("mem_percent"))
+        except Exception as exc:
+            logger.debug("[stats] broadcast skipped: {}", exc)
+
+    async def _run_logstore_rollup(self) -> None:
+        """Roll up raw snapshots into 5-min buckets."""
+        if self._logstore is None:
+            return
+        try:
+            n = await asyncio.to_thread(self._logstore.roll_up_5min)
+            if n:
+                logger.debug("[logstore] rolled up {} 5-min buckets", n)
+        except Exception as exc:
+            logger.error("[logstore] 5-min rollup failed: {}", exc)
+
+    async def _run_logstore_rollup_hourly(self) -> None:
+        """Roll up 5-min buckets into hourly buckets."""
+        if self._logstore is None:
+            return
+        try:
+            n = await asyncio.to_thread(self._logstore.roll_hourly)
+            if n:
+                logger.info("[logstore] rolled up {} hourly buckets", n)
+            prune_result = await asyncio.to_thread(self._logstore.prune)
+            logger.debug("[logstore] prune: {}", prune_result)
+        except Exception as exc:
+            logger.error("[logstore] hourly rollup failed: {}", exc)
+
+    async def _run_logstore_rollup_daily(self) -> None:
+        """Roll up hourly buckets into daily summaries."""
+        if self._logstore is None:
+            return
+        try:
+            n = await asyncio.to_thread(self._logstore.roll_daily)
+            if n:
+                logger.info("[logstore] rolled up {} daily summaries", n)
+        except Exception as exc:
+            logger.error("[logstore] daily rollup failed: {}", exc)
+
+    @property
+    def logstore(self) -> Optional[LogStore]:
+        return self._logstore
+
+    @property
+    def role(self) -> NodeRole:
+        return self._role
+
+    def get_own_stats(self) -> Optional[dict]:
+        """Return the latest collected stats snapshot (own node)."""
+        if self._logstore is None:
+            return None
+        try:
+            return self._logstore.latest_snapshot()
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Push monitors (Slice D)

@@ -8,12 +8,27 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 HISTORY_MAXLEN = 100
+STATS_HISTORY_MAXLEN = 360  # 1 hour at 10s interval
 
 
 class PeerStatus(str, enum.Enum):
     ALIVE = "ALIVE"
     DEAD = "DEAD"
     UNKNOWN = "UNKNOWN"
+    UNREACHABLE = "UNREACHABLE"   # network issue, both sides may be up
+
+
+class SyncStatus(str, enum.Enum):
+    LIVE = "live"           # receiving live gossip
+    SYNCING = "syncing"     # sync request sent, waiting
+    GAP = "gap"             # monitoring node was offline; gap not yet synced
+    SYNCED = "synced"       # gap filled with historical data
+
+
+class NodeRole(str, enum.Enum):
+    MONITORED = "monitored"     # this device is being monitored
+    MONITORING = "monitoring"   # this device monitors others
+    BOTH = "both"               # default: both sides
 
 
 class PeerEntry(BaseModel):
@@ -39,7 +54,7 @@ class PeerState:
     """
     Runtime state for a monitored peer.
 
-    Not a Pydantic model — holds mutable deque and is never serialized.
+    Not a Pydantic model — holds mutable deques and is never serialized.
     """
 
     __slots__ = (
@@ -51,6 +66,14 @@ class PeerState:
         "current_status",
         "last_fail_reason",
         "cached_node_addr",
+        # System stats (Phase 1/4)
+        "last_stats",
+        "stats_history",
+        "containers",
+        # Sync tracking (Phase 3/5)
+        "sync_status",
+        "last_sync_ts",
+        "has_dashboard_gap",
     )
 
     def __init__(self, entry: PeerEntry) -> None:
@@ -61,4 +84,14 @@ class PeerState:
         self.consecutive_successes: int = 0
         self.current_status: PeerStatus = PeerStatus.UNKNOWN
         self.last_fail_reason: Optional[str] = None
-        self.cached_node_addr: object | None = None  # iroh.NodeAddr, cached to avoid FFI churn
+        self.cached_node_addr: object | None = None  # iroh.NodeAddr
+
+        # System stats
+        self.last_stats: Optional[dict] = None           # latest SystemSnapshot dict
+        self.stats_history: deque[dict] = deque(maxlen=STATS_HISTORY_MAXLEN)
+        self.containers: list[dict] = []                  # latest container list
+
+        # Sync state
+        self.sync_status: SyncStatus = SyncStatus.LIVE
+        self.last_sync_ts: Optional[datetime] = None
+        self.has_dashboard_gap: bool = False

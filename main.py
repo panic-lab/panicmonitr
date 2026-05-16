@@ -35,7 +35,9 @@ from src.identity import (
     validate_node_id,
 )
 from src.log import TrustLog
+from src.logstore import DEFAULT_LOGSTORE_PATH
 from src.notifier import WebhookNotifier, build_notifier, sample_event
+from src.schema import NodeRole
 from src.trust import PeerTrustManager
 
 LEGACY_ARTIFACTS = [
@@ -136,6 +138,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status-bind", type=str, default="127.0.0.1:8080", help="HTTP dashboard bind (host:port, or empty string to disable). Default: 127.0.0.1:8080")
     parser.add_argument("--push-to", type=str, action="append", default=None, metavar="NODE_ID", help="Push a heartbeat to this peer every --interval seconds (repeatable; for behind-NAT setups)")
     parser.add_argument("--force-fresh", action="store_true", help="Wipe legacy account/mesh artifacts during --init")
+    # Phase 0-3 additions
+    parser.add_argument("--role", type=str, default="both", choices=[r.value for r in NodeRole],
+                        help="Node role: monitored, monitoring, or both (default: both)")
+    parser.add_argument("--dashboard-port", type=int, default=42069,
+                        help="Port for Flask+Plotly web dashboard (default: 42069; 0 to disable)")
+    parser.add_argument("--stats-interval", type=int, default=10,
+                        help="System stats collection interval in seconds (default: 10)")
+    parser.add_argument("--logstore-db", type=Path, default=DEFAULT_LOGSTORE_PATH,
+                        help=f"Path to the server-side logstore SQLite DB (default: {DEFAULT_LOGSTORE_PATH})")
     return parser.parse_args()
 
 
@@ -669,6 +680,10 @@ def cli_main() -> None:
         flap_min_dwell_seconds=args.flap_min_dwell,
         status_bind=args.status_bind,
         push_to=args.push_to or [],
+        role=NodeRole(args.role),
+        stats_interval_seconds=args.stats_interval,
+        logstore_path=args.logstore_db,
+        dashboard_port=args.dashboard_port,
     )
 
     if args.fetch_dashboard:

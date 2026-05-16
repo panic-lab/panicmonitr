@@ -12,7 +12,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Static
 
 from src.engine import MonitorEngine
-from src.schema import LatencyRecord, PeerStatus
+from src.schema import LatencyRecord, NodeRole, PeerStatus, SyncStatus
 from src.statuspage import ASCII_BANNER, build_dashboard_snapshot
 
 _SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
@@ -21,9 +21,8 @@ _SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
 def _sparkline(records: Iterable[LatencyRecord], width: int = 24) -> str:
     """Render the tail of *records* as a unicode sparkline.
 
-    DEAD probes render as a gap ('·'). ALIVE RTTs are scaled against the
-    window's observed max so the shape is meaningful across peers with
-    different baseline latencies.
+    DEAD probes render as a gap ('·'). UNREACHABLE renders as '▒'.
+    ALIVE RTTs are scaled against the window's observed max.
     """
     tail = list(records)[-width:]
     if not tail:
@@ -36,6 +35,9 @@ def _sparkline(records: Iterable[LatencyRecord], width: int = 24) -> str:
     span = hi - lo if hi > lo else 1.0
     out: list[str] = []
     for r in tail:
+        if r.status == PeerStatus.UNREACHABLE:
+            out.append("▒")
+            continue
         if r.status != PeerStatus.ALIVE or r.rtt_ms is None:
             out.append("·")
             continue
@@ -43,6 +45,23 @@ def _sparkline(records: Iterable[LatencyRecord], width: int = 24) -> str:
         idx = min(len(_SPARK_BLOCKS) - 1, max(0, int(norm * (len(_SPARK_BLOCKS) - 1))))
         out.append(_SPARK_BLOCKS[idx])
     return "".join(out)
+
+
+def _block_bar(pct: float, width: int = 16) -> str:
+    """Render a horizontal block bar using Unicode braille/blocks.
+
+    Returns a string like '████████░░░░░░░░' (width chars).
+    """
+    filled = int(round(pct / 100 * width))
+    filled = max(0, min(width, filled))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _fmt_bytes_short(n: int) -> str:
+    for unit, div in (("T", 2**40), ("G", 2**30), ("M", 2**20), ("K", 2**10)):
+        if n >= div:
+            return f"{n/div:.1f}{unit}"
+    return f"{n}B"
 
 
 # SkyTunnel ember palette
@@ -545,6 +564,7 @@ class MonitorApp(App):
         ("p", "add_peer", "add peer"),
         ("m", "set_maintenance", "maintenance"),
         ("t", "edit_tags", "tags"),
+        ("w", "toggle_stats", "sys stats"),
     ]
 
     def __init__(self, engine: MonitorEngine) -> None:
@@ -553,6 +573,7 @@ class MonitorApp(App):
         self._boot_time = datetime.now(IST)
         self._current_devices: list = []
         self._snapshot: dict | None = None
+        self._show_stats: bool = True
 
     def compose(self) -> ComposeResult:
         yield Static(BANNER, id="banner")
@@ -561,7 +582,8 @@ class MonitorApp(App):
             f"[{TEXT_BRIGHT}][[r]][/] [{TEXT_PRIMARY}]refresh[/]  "
             f"[{TEXT_BRIGHT}][[p]][/] [{TEXT_PRIMARY}]add peer[/]  "
             f"[{TEXT_BRIGHT}][[m]][/] [{TEXT_PRIMARY}]maintenance[/]  "
-            f"[{TEXT_BRIGHT}][[t]][/] [{TEXT_PRIMARY}]tags[/]",
+            f"[{TEXT_BRIGHT}][[t]][/] [{TEXT_PRIMARY}]tags[/]  "
+            f"[{TEXT_BRIGHT}][[w]][/] [{TEXT_PRIMARY}]sys stats[/]",
             id="cmd-bar",
         )
         yield Static("", id="stats-strip")
@@ -571,10 +593,13 @@ class MonitorApp(App):
             with Vertical(id="detail-pane"):
                 yield Static("select a peer", id="detail-header")
                 yield Static("", id="detail-tags")
+                yield Static("", id="detail-sync")
                 yield Static("", id="detail-uptime")
                 yield Static("", id="detail-hourly")
                 yield Static("", id="detail-rtt-spark")
                 yield Static("", id="detail-rtt-stats")
+                yield Static("", id="detail-sys-bars")
+                yield Static("", id="detail-containers")
                 yield Static("", id="detail-events")
         yield Static("", id="events-feed-header")
         yield DataTable(id="events-feed", zebra_stripes=True)
@@ -583,13 +608,12 @@ class MonitorApp(App):
         table = self.query_one("#device-table", DataTable)
         table.cursor_type = "row"
         table.add_columns(
-            "#", "ALIAS", "TAGS", "STATUS", "RTT", "24H", "LAST SEEN", "FAIL"
+            "#", "ALIAS", "TAGS", "STATUS", "SYNC", "RTT", "24H", "LAST SEEN", "FAIL"
         )
         events = self.query_one("#events-feed", DataTable)
         events.cursor_type = "row"
         events.add_columns("SEQ", "WHEN", "EVENT", "PEER", "COUNT", "REASON")
         self._refresh_all()
-        # Ensure a row is always selected so key-bound actions work immediately.
         table = self.query_one("#device-table", DataTable)
         if table.row_count > 0 and table.cursor_row is None:
             table.move_cursor(row=0)
@@ -603,6 +627,10 @@ class MonitorApp(App):
 
     def action_add_peer(self) -> None:
         self.push_screen(AddPeerModal(self._engine), self._on_added)
+
+    def action_toggle_stats(self) -> None:
+        self._show_stats = not self._show_stats
+        self._refresh_detail()
 
     def action_set_maintenance(self) -> None:
         row = self._selected_row()
@@ -711,15 +739,23 @@ class MonitorApp(App):
 
             if in_maint:
                 status = f"[{ACCENT}]◐ MAINT[/]"
+                sync_badge = f"[{TEXT_DIM}]—[/]"
             elif device.current_status == PeerStatus.ALIVE:
                 status = f"[{TEAL}]● ALIVE[/]"
                 alive_count += 1
+                sync_badge = self._fmt_sync(device)
             elif device.current_status == PeerStatus.DEAD:
                 status = f"[{RED}]● DEAD[/]"
                 dead_count += 1
+                sync_badge = self._fmt_sync(device)
+            elif device.current_status == PeerStatus.UNREACHABLE:
+                status = f"[{ACCENT2}]◌ UNREACH[/]"
+                unknown_count += 1
+                sync_badge = self._fmt_sync(device)
             else:
                 status = f"[{TEXT_DIM}]○ UNKNOWN[/]"
                 unknown_count += 1
+                sync_badge = f"[{TEXT_DIM}]—[/]"
 
             fail_str = str(device.consecutive_failures)
             if device.consecutive_failures > 0:
@@ -748,6 +784,7 @@ class MonitorApp(App):
                 device.entry.alias or "---",
                 tags_cell,
                 status,
+                sync_badge,
                 rtt,
                 uptime_cell,
                 last_seen,
@@ -774,21 +811,24 @@ class MonitorApp(App):
     def _refresh_detail(self) -> None:
         header = self.query_one("#detail-header", Static)
         tags_w = self.query_one("#detail-tags", Static)
+        sync_w = self.query_one("#detail-sync", Static)
         uptime_w = self.query_one("#detail-uptime", Static)
         hourly_w = self.query_one("#detail-hourly", Static)
         rtt_spark_w = self.query_one("#detail-rtt-spark", Static)
         rtt_stats_w = self.query_one("#detail-rtt-stats", Static)
+        sys_bars_w = self.query_one("#detail-sys-bars", Static)
+        containers_w = self.query_one("#detail-containers", Static)
         events_w = self.query_one("#detail-events", Static)
+
+        def _clear_all():
+            for w in (header, tags_w, sync_w, uptime_w, hourly_w,
+                      rtt_spark_w, rtt_stats_w, sys_bars_w, containers_w, events_w):
+                w.update("")
 
         row = self._selected_row()
         if row is None:
             header.update("select a peer")
-            tags_w.update("")
-            uptime_w.update("")
-            hourly_w.update("")
-            rtt_spark_w.update("")
-            rtt_stats_w.update("")
-            events_w.update("")
+            _clear_all()
             return
 
         device = self._current_devices[row]
@@ -799,50 +839,61 @@ class MonitorApp(App):
 
         alias = device.entry.alias or "---"
         in_maint = trusted is not None and trusted.in_maintenance(now)
-        status_text = (
-            "MAINT" if in_maint else
-            ("ALIVE" if device.current_status == PeerStatus.ALIVE else
-             ("DEAD" if device.current_status == PeerStatus.DEAD else "UNKNOWN"))
-        )
-        status_color = (
-            ACCENT if in_maint else
-            (TEAL if device.current_status == PeerStatus.ALIVE else
-             (RED if device.current_status == PeerStatus.DEAD else TEXT_DIM))
-        )
+        if in_maint:
+            status_text, status_color = "MAINT", ACCENT
+        elif device.current_status == PeerStatus.ALIVE:
+            status_text, status_color = "ALIVE", TEAL
+        elif device.current_status == PeerStatus.DEAD:
+            status_text, status_color = "DEAD", RED
+        elif device.current_status == PeerStatus.UNREACHABLE:
+            status_text, status_color = "UNREACHABLE", ACCENT2
+        else:
+            status_text, status_color = "UNKNOWN", TEXT_DIM
         header.update(
             f"[{TEXT_BRIGHT}]{alias}[/]  [{TEXT_MUTED}]{nid[:20]}...[/]  "
             f"[{status_color}]● {status_text}[/]"
         )
+
         if trusted and trusted.tags:
             tags_w.update(f"[{ACCENT2}]{', '.join(trusted.tags)}[/]")
         else:
             tags_w.update(f"[{TEXT_DIM}]no tags[/]")
+
+        # Sync status badge (P5 ambiguity fix)
+        ss = getattr(device, "sync_status", SyncStatus.LIVE)
+        ss_color = {
+            SyncStatus.LIVE:    TEAL,
+            SyncStatus.SYNCING: ACCENT,
+            SyncStatus.GAP:     ACCENT2,
+            SyncStatus.SYNCED:  TEXT_PRIMARY,
+        }.get(ss, TEXT_DIM)
+        last_sync = getattr(device, "last_sync_ts", None)
+        sync_str = f"[{ss_color}]{ss.value.upper()}[/]"
+        if last_sync:
+            sync_str += f"  [{TEXT_DIM}]last sync {self._fmt_rel(last_sync.isoformat())}[/]"
+        sync_w.update(sync_str)
 
         # Uptime cells
         def fmt_pct(v):
             return f"{v:.1f}%" if v is not None else "—"
 
         def pct_color(v):
-            if v is None:
-                return TEXT_DIM
-            if v >= 99:
-                return TEAL
-            if v >= 95:
-                return ACCENT2
+            if v is None: return TEXT_DIM
+            if v >= 99: return TEAL
+            if v >= 95: return ACCENT2
             return RED
 
         u1h = history.uptime_percent(nid, timedelta(hours=1))
         u24h = history.uptime_percent(nid, timedelta(hours=24))
         u7d = history.uptime_percent(nid, timedelta(days=7))
         u30d = history.uptime_percent(nid, timedelta(days=30))
-
         uptime_cells = "  ".join(
             f"[{TEXT_DIM}]{label}[/]  [{pct_color(v)}]{fmt_pct(v)}[/]"
             for label, v in [("1h", u1h), ("24h", u24h), ("7d", u7d), ("30d", u30d)]
         )
         uptime_w.update(uptime_cells)
 
-        # Hourly bars
+        # Hourly ░▓█ timeline — UNREACHABLE shown as amber ▒
         buckets = history.hourly_uptime_buckets(nid, hours=24)
         bars = []
         for b in buckets:
@@ -851,33 +902,77 @@ class MonitorApp(App):
             elif b >= 99:
                 bars.append(f"[{TEAL}]█[/]")
             elif b >= 95:
-                bars.append(f"[{ACCENT2}]█[/]")
+                bars.append(f"[{ACCENT2}]▓[/]")
+            elif b >= 50:
+                bars.append(f"[{ACCENT}]▒[/]")
             else:
                 bars.append(f"[{RED}]█[/]")
         hourly_w.update("".join(bars) if bars else f"[{TEXT_DIM}]no data[/]")
 
-        # RTT sparkline (48 chars, from recent history)
-        rows = history.recent_rows(nid, hours=24)
-        # ProbeRow is duck-typed enough for _sparkline (has .rtt_ms and .status)
-        spark = _sparkline(rows, width=48)
-        if spark:
-            rtt_spark_w.update(f"[{ACCENT2}]{spark}[/]")
-        else:
-            rtt_spark_w.update(f"[{TEXT_DIM}]no rtt data[/]")
+        # RTT sparkline
+        hist_rows = history.recent_rows(nid, hours=24)
+        spark = _sparkline(hist_rows, width=48)
+        rtt_spark_w.update(f"[{ACCENT2}]{spark}[/]" if spark else f"[{TEXT_DIM}]no rtt data[/]")
 
         # RTT stats
         rtt = history.rtt_stats(nid, hours=24)
         rtt_now = device.latency_history[-1].rtt_ms if device.latency_history else None
-
-        def fmt_ms(v):
-            return f"{v:.2f}ms" if v is not None else "—"
-
+        def fmt_ms(v): return f"{v:.2f}ms" if v is not None else "—"
         rtt_stats_w.update(
             f"[{TEXT_DIM}]now[/]  [{TEXT_BRIGHT}]{fmt_ms(rtt_now)}[/]   "
             f"[{TEXT_DIM}]min[/]  [{TEXT_BRIGHT}]{fmt_ms(rtt['rtt_min'])}[/]   "
             f"[{TEXT_DIM}]max[/]  [{TEXT_BRIGHT}]{fmt_ms(rtt['rtt_max'])}[/]   "
             f"[{TEXT_DIM}]avg[/]  [{TEXT_BRIGHT}]{fmt_ms(rtt['rtt_avg'])}[/]"
         )
+
+        # System stats bars (P6) — shown only when _show_stats is True
+        if self._show_stats:
+            snap = getattr(device, "last_stats", None)
+            if snap:
+                cpu = snap.get("cpu_percent", 0.0)
+                mem = snap.get("mem_percent", 0.0)
+                disk = snap.get("disk_percent", 0.0)
+                cpu_bar = _block_bar(cpu)
+                mem_bar = _block_bar(mem)
+                disk_bar = _block_bar(disk)
+                bars_lines = [
+                    f"[{TEXT_DIM}]CPU [/][{TEAL}]{cpu_bar}[/] [{TEXT_BRIGHT}]{cpu:.1f}%[/]",
+                    f"[{TEXT_DIM}]MEM [/][{ACCENT}]{mem_bar}[/] [{TEXT_BRIGHT}]{mem:.1f}%[/]",
+                    f"[{TEXT_DIM}]DSK [/][{ACCENT2}]{disk_bar}[/] [{TEXT_BRIGHT}]{disk:.1f}%[/]",
+                ]
+                load1 = snap.get("load_avg_1m", 0)
+                load5 = snap.get("load_avg_5m", 0)
+                bars_lines.append(
+                    f"[{TEXT_DIM}]load[/] [{TEXT_MUTED}]{load1:.2f} {load5:.2f}[/]  "
+                    f"[{TEXT_DIM}]procs[/] [{TEXT_MUTED}]{snap.get('process_count', '?')}[/]"
+                )
+                sys_bars_w.update("\n".join(bars_lines))
+
+                # Container list
+                containers: list[dict] = getattr(device, "containers", [])
+                if containers:
+                    c_lines = []
+                    for c in containers[:8]:
+                        cname = c.get("name", "?")[:16]
+                        cst = c.get("status", "?")
+                        health = c.get("health") or ""
+                        st_col = TEAL if cst == "running" else (
+                            RED if health == "unhealthy" else TEXT_DIM)
+                        cpu_c = c.get("cpu_percent", 0)
+                        mem_mb = c.get("mem_usage_bytes", 0) // (1024 * 1024)
+                        c_lines.append(
+                            f"[{st_col}]▪[/] [{TEXT_BRIGHT}]{cname:<16}[/] "
+                            f"[{TEXT_DIM}]{cst:<10}[/] [{TEXT_MUTED}]cpu={cpu_c:.1f}% mem={mem_mb}M[/]"
+                        )
+                    containers_w.update("\n".join(c_lines))
+                else:
+                    containers_w.update("")
+            else:
+                sys_bars_w.update(f"[{TEXT_DIM}]no sys stats (peer may not send telemetry)[/]")
+                containers_w.update("")
+        else:
+            sys_bars_w.update("")
+            containers_w.update("")
 
         # Peer events
         peer_events = self._engine.log.monitor_events(nid)[-5:][::-1]
@@ -896,6 +991,17 @@ class MonitorApp(App):
                     f"[{kind_color}]{ev.type}[/]  [{TEXT_BRIGHT}]count={count}[/]{reason_str}"
                 )
             events_w.update("\n".join(lines))
+
+    def _fmt_sync(self, device) -> str:
+        """Render sync-status badge for the table (P5)."""
+        ss = getattr(device, "sync_status", SyncStatus.LIVE)
+        color = {
+            SyncStatus.LIVE:    TEAL,
+            SyncStatus.SYNCING: ACCENT,
+            SyncStatus.GAP:     ACCENT2,
+            SyncStatus.SYNCED:  TEXT_PRIMARY,
+        }.get(ss, TEXT_DIM)
+        return f"[{color}]{ss.value}[/]"
 
     def _refresh_events_feed(self) -> None:
         table = self.query_one("#events-feed", DataTable)
@@ -929,7 +1035,7 @@ class MonitorApp(App):
         try:
             dt = datetime.fromisoformat(iso_ts)
         except Exception:  # noqa: BLE001
-            return iso_ts  # fallback: show raw timestamp string
+            return iso_ts
         delta = datetime.now(IST) - dt
         total = int(delta.total_seconds())
         if total < 60:
