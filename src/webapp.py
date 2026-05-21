@@ -16,6 +16,7 @@ handlers before the engine closes its SQLite stores.
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional
@@ -561,6 +562,12 @@ footer.foot {
   let selectedNodeId = null;
   let ownNodeId = null;
   let nodes = [];
+  // Startup grace: suppress "STALE" for the first 15 s after page load.
+  // On fresh installs the engine may still be initialising (keyring lookup,
+  // iroh node startup) while Flask already answers. Without the grace window
+  // the user sees a flash of red "STALE" before the first successful poll.
+  const STARTUP_GRACE_MS = 15000;
+  const pageLoadedAt = Date.now();
 
   // ── Element refs ────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -739,6 +746,13 @@ footer.foot {
       setText(mTemp, s.cpu_temp != null ? fmtNum(s.cpu_temp, 1) + '°C' : '—');
       setText(mRx, fmtMB(s.net_recv_bytes));
       setText(mTx, fmtMB(s.net_sent_bytes));
+    } else {
+      // No stats available — explicitly clear to avoid stale data from a
+      // previously-viewed node bleeding into this node's detail view.
+      setWidth(barCpu, 0); setWidth(barMem, 0); setWidth(barDisk, 0);
+      setText(valCpu, '—'); setText(valMem, '—'); setText(valDisk, '—');
+      setText(mHost, '—'); setText(mLoad, '—'); setText(mProcs, '—');
+      setText(mTemp, '—'); setText(mRx, '—'); setText(mTx, '—');
     }
 
     paintProcesses(node);
@@ -891,7 +905,14 @@ footer.foot {
   function paintChart(node) {
     if (typeof Plotly === 'undefined') return;
     const history = node.stats_history || [];
-    if (!history.length) return;
+    if (!history.length) {
+      // No history — purge any stale chart. Note: selectNode() already resets
+      // chartReady=false before calling paintDetails(), so we can't gate on it.
+      // Plotly.purge is a no-op on an empty element, so always safe to call.
+      try { Plotly.purge(chartHost); } catch (_) {}
+      chartReady = false;
+      return;
+    }
 
     const ts = history.map(s => s.timestamp || s.ts);
     const cpu = history.map(s => s.cpu_percent);
@@ -948,8 +969,14 @@ footer.foot {
       statusText.textContent = 'live · ' + new Date().toLocaleTimeString();
       liveDot.className = 'live-dot';
     } catch (err) {
-      statusText.textContent = 'stale: ' + err.message;
-      liveDot.className = 'live-dot stale';
+      if (Date.now() - pageLoadedAt < STARTUP_GRACE_MS) {
+        // Engine still warming up — show a neutral indicator.
+        statusText.textContent = 'starting\u2026';
+        liveDot.className = 'live-dot paused';
+      } else {
+        statusText.textContent = 'stale: ' + err.message;
+        liveDot.className = 'live-dot stale';
+      }
     } finally { inFlight = false; }
   }
 
@@ -986,6 +1013,7 @@ def _rel(dt: Optional[datetime]) -> str:
         return f"{delta // 60}m ago"
     if delta < 86400:
         return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
 
 
 # ---------------------------------------------------------------------------
@@ -1091,12 +1119,24 @@ class WebApp:
                 except Exception as exc:
                     return jsonify({"error": str(exc)[:300]}), 500
 
-            # Otherwise, attempt to pull over Iroh LOGS_ALPN
+            # Otherwise, attempt to pull over Iroh LOGS_ALPN.
+            # fetch_peer_container_logs is an async coroutine; Flask runs in a
+            # thread outside the asyncio loop, so we must bridge via the engine
+            # loop's run_coroutine_threadsafe.
+            loop = getattr(engine, 'loop', None)
+            if loop is None or not loop.is_running():
+                return jsonify({"error": "engine event loop not available"}), 503
             try:
-                res = engine.fetch_peer_container_logs(nid, cid, tail=tail)
+                import concurrent.futures
+                fut = asyncio.run_coroutine_threadsafe(
+                    engine.fetch_peer_container_logs(nid, cid, tail=tail), loop
+                )
+                res = fut.result(timeout=35)
                 if "error" in res:
                     return jsonify(res), 500
                 return jsonify(res)
+            except concurrent.futures.TimeoutError:
+                return jsonify({"error": "timed out fetching logs from peer"}), 504
             except Exception as exc:
                 return jsonify({"error": str(exc)[:300]}), 500
 

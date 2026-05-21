@@ -79,11 +79,25 @@ async def _log_conn_type(net, node_id_str: str, label: str, tag: str) -> None:
 
 
 class HeartbeatProtocol:
-    """Accepts liveness probes.
+    """Accepts inbound liveness probes on ALPN ``panic-monitor/heartbeat/1``.
 
-    Auth is iroh's TLS (peer holds the private key for ``conn.remote_node_id()``)
-    plus peer membership + the ``monitor`` permission. No cert exchange on the
-    wire: connection completion itself is the liveness signal.
+    Wire protocol
+    -------------
+    No framed payload in either direction. The QUIC+TLS handshake and ALPN
+    negotiation are the entire protocol: a completed handshake proves the
+    remote holds the Ed25519 private key for ``conn.remote_node_id()``.
+
+    Flow (initiator = monitoring node, acceptor = monitored node):
+      1. Initiator: ``endpoint.connect(addr, HEARTBEAT_ALPN)``
+      2. Acceptor:  ``conn.remote_node_id()`` → verify ``monitor`` permission
+      3. Acceptor:  ``conn.close(0, b"pong")``
+      4. Initiator: ``conn.rtt()`` → round-trip time in microseconds
+
+    Auth
+    ----
+    Iroh TLS (Ed25519) + ``PeerTrustManager.verify_and_authorize(remote, "monitor")``.
+    Note: ``conn.remote_node_id()`` is **synchronous** in the iroh Python
+    bindings — do NOT wrap it in ``asyncio.wait_for`` or ``await``.
     """
 
     def __init__(self, trust: PeerTrustManager, creator: "HeartbeatProtocolCreator") -> None:
@@ -150,7 +164,27 @@ async def _read_framed(recv_stream, max_size: int) -> bytes:
 
 
 class StatusProtocol:
-    """Accepts inbound dashboard-fetch requests from authorized siblings."""
+    """Accepts inbound dashboard-fetch requests on ALPN ``panic-monitor/status/0``.
+
+    Wire protocol
+    -------------
+    One bidirectional stream; server → client only.
+
+    Flow:
+      1. Client: ``conn.open_bi()`` (opens the stream; no request body needed)
+      2. Server: verifies ``view_dashboard`` permission
+      3. Server: ``_write_framed(send, payload)``
+             payload = ``build_dashboard_snapshot()`` serialised as JSON
+             frame  = 4-byte big-endian length prefix + body
+      4. Server: ``send.finish()``; ``conn.close(0, b"done")``
+      5. Client: ``_read_framed(recv, STATUS_RESPONSE_MAX)``
+
+    Max payload: 2 MiB (``STATUS_RESPONSE_MAX``).
+    Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
+
+    Auth: ``view_dashboard`` permission.
+    Note: ``conn.remote_node_id()`` is synchronous — no await.
+    """
 
     def __init__(self, creator: "StatusProtocolCreator") -> None:
         self._creator = creator
@@ -220,7 +254,38 @@ class StatusProtocolCreator:
 # ---------------------------------------------------------------------------
 
 class ContainerLogsProtocol:
-    """Accepts inbound container log requests."""
+    """Accepts inbound container log requests on ALPN ``panic-monitor/logs/0``.
+
+    Wire protocol
+    -------------
+    One bidirectional stream; client writes a request, server replies.
+
+    Flow:
+      1. Client: ``conn.open_bi()``
+      2. Server: verifies ``view_dashboard`` permission
+      3. Client: ``_write_framed(send, req_json)``
+             req  = ``{"cid": "<container_id_or_name>", "tail": <int>}``
+      4. Client: ``send.finish()``
+      5. Server: fetches logs from local docker-py client
+      6. Server: ``_write_framed(send, resp_json)``
+             resp = ``{"logs": "<text>"}``  or  ``{"error": "<msg>"}``
+      7. Server: ``send.finish()``; ``conn.close(0, b"done")``
+
+    Max payload: 4 MiB.
+    Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
+
+    Auth: ``view_dashboard`` permission.
+
+    Caller note
+    -----------
+    ``MonitorEngine.fetch_peer_container_logs`` is an ``async def``.
+    Flask route handlers run in threads — bridge via::
+
+        fut = asyncio.run_coroutine_threadsafe(
+            engine.fetch_peer_container_logs(nid, cid, tail=tail), engine.loop
+        )
+        result = fut.result(timeout=35)
+    """
 
     def __init__(self, creator: "ContainerLogsProtocolCreator") -> None:
         self._creator = creator
@@ -308,8 +373,30 @@ class ContainerLogsProtocolCreator:
 # ---------------------------------------------------------------------------
 
 class PushProtocol:
+    """Accepts inbound reverse-heartbeat connections on ALPN ``panic-monitor/push/0``.
+
+    Wire protocol
+    -------------
+    No framed payload. Same "connection = liveness proof" model as
+    ``HeartbeatProtocol``, but with the roles reversed: here the *monitored*
+    node initiates the connection to report its own liveness.
+
+    Flow:
+      1. Pusher:  ``endpoint.connect(addr, PUSH_ALPN)``
+      2. Acceptor: ``conn.remote_node_id()`` → verify ``monitor`` permission
+      3. Acceptor: calls ``engine._record_push_from(remote)`` to record ALIVE
+      4. Acceptor: ``conn.close(0, b"push-ack")``
+
+    Use-case: nodes behind strict NAT where outbound probes from the monitor
+    cannot hole-punch. Enable with ``--push-to <NODE_ID>``.
+
+    Auth: ``monitor`` permission (same as HEARTBEAT).
+    Note: ``conn.remote_node_id()`` is synchronous — no await.
+    """
+
     def __init__(self, creator: "PushProtocolCreator") -> None:
         self._creator = creator
+
 
     @property
     def _trust(self) -> PeerTrustManager:
@@ -356,10 +443,30 @@ class PushProtocolCreator:
 # ---------------------------------------------------------------------------
 
 class SyncProtocol:
-    """Accepts inbound sync requests from monitoring nodes.
+    """Accepts inbound log-sync requests on ALPN ``panic-monitor/sync/0``.
 
-    When a monitoring node reconnects after a gap, it sends a SyncRequest.
-    We respond with the appropriate historical data from the LogStore.
+    Wire protocol
+    -------------
+    One bidirectional stream; client writes a request, server replies.
+
+    Flow:
+      1. Client: ``conn.open_bi()``
+      2. Server: verifies ``monitor`` permission
+      3. Client: ``_write_framed(send, req_json)``
+             req  = ``{"last_seen_timestamp": "<ISO-8601>"}``
+      4. Client: ``send.finish()``
+      5. Server: queries ``LogStore.get_sync_payload(since)``
+      6. Server: if payload > 32 MiB, falls back to daily-summary strategy
+      7. Server: ``_write_framed(send, resp_json)``
+             resp = ``{"raw_snapshots": [...], "events": [...],
+                       "sync_strategy": "recent"|"1hour"|"daily_fallback"}``
+      8. Server: ``send.finish()``; ``conn.close(0, b"sync done")``
+
+    Max payload: 32 MiB (``SYNC_RESPONSE_MAX``).
+    Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
+
+    Auth: ``monitor`` permission.
+    Note: ``conn.remote_node_id()`` is synchronous — no await.
     """
 
     def __init__(self, creator: "SyncProtocolCreator") -> None:
@@ -829,7 +936,7 @@ class MonitorEngine:
                 # Force handshake to complete by awaiting the remote node ID.
                 # endpoint.connect() can return a lazy handle; this ensures the
                 # remote peer actually responded to the QUIC handshake + ALPN.
-                await asyncio.wait_for(conn.remote_node_id(), timeout=5)
+                conn.remote_node_id()  # sync — just ensure it succeeds (proves handshake complete)
 
             rtt_us = conn.rtt()
             rtt_ms = rtt_us / 1000.0 if rtt_us else None

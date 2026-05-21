@@ -1,14 +1,25 @@
 [Unit]
 Description=Panic Monitor - P2P Health Monitoring Daemon
-After=network-online.target
+# network.target: broad compat for older systemd (<=248) where network-online
+# isn't reliably activated in user sessions.
+# network-online.target: strong ordering on newer systemd where available.
+After=network.target network-online.target
 Wants=network-online.target
 
-StartLimitIntervalSec=30
+StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
 Type=simple
 {credential_directive}{password_env_directive}
+
+# Brief pause before exec so the network stack and any keyring daemon (e.g.
+# gnome-keyring-daemon, kwallet) have time to come up. On older systemd
+# user-sessions network-online.target may be satisfied before sockets are
+# routable. 2 s is negligible in practice but prevents a failed first relay
+# dial from marking the service stale immediately after install.
+ExecStartPre=/bin/sleep 2
+
 ExecStart={exec_start} --daemon \
     --identity      {identity_path} \
     --identity-meta {identity_meta_path} \
@@ -24,7 +35,9 @@ Environment=PANIC_MONITOR_DATA_DIR={data_dir}
 WorkingDirectory={working_dir}
 Restart=on-failure
 RestartSec=5
-WatchdogSec=90
+# Do not restart if the process exits with code 78 (EX_CONFIG) — that means
+# a fatal config error (bad password, missing key) that a restart won't fix.
+RestartPreventExitStatus=78
 
 # Resource limits — generous enough for routine operation, tight enough to
 # cap a runaway leak before it can take down the host.
