@@ -173,21 +173,19 @@ class StatusProtocol:
 
     Wire protocol
     -------------
-    One bidirectional stream; server → client only.
+    Server opens a unidirectional stream to the client.
 
     Flow:
-      1. Client: ``conn.open_bi()`` (opens the stream; no request body needed)
-      2. Server: verifies ``view_dashboard`` permission
-      3. Server: ``_write_framed(send, payload)``
-             payload = ``build_dashboard_snapshot()`` serialised as JSON
-             frame  = 4-byte big-endian length prefix + body
+      1. Client: ``endpoint.connect(addr, STATUS_ALPN)``
+      2. Server: verifies ``view_dashboard`` or ``monitor`` permission
+      3. Server: ``conn.open_uni()`` → writes length-prefixed JSON payload
       4. Server: ``send.finish()``; ``conn.close(0, b"done")``
-      5. Client: ``_read_framed(recv, STATUS_RESPONSE_MAX)``
+      5. Client: ``conn.accept_uni()`` → ``_read_framed(recv, STATUS_RESPONSE_MAX)``
 
     Max payload: 2 MiB (``STATUS_RESPONSE_MAX``).
     Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
 
-    Auth: ``view_dashboard`` permission.
+    Auth: ``view_dashboard`` or ``monitor`` permission.
     Note: ``conn.remote_node_id()`` is synchronous — no await.
     """
 
@@ -213,14 +211,6 @@ class StatusProtocol:
             conn.close(403, reason.encode()[:120])
             return
 
-        try:
-            bi = await asyncio.wait_for(conn.accept_bi(), timeout=10)
-            send_stream = bi.send()
-        except Exception as exc:
-            logger.warning("[status.accept] stream open failed: {}", exc)
-            conn.close(500, b"stream error")
-            return
-
         engine = self._engine
         if engine is None:
             conn.close(500, b"engine not ready")
@@ -229,14 +219,15 @@ class StatusProtocol:
         try:
             snapshot = build_dashboard_snapshot(engine)
             payload = json.dumps(snapshot).encode("utf-8")
-            await _write_framed(send_stream, payload)
+            send_stream = await asyncio.wait_for(conn.open_uni(), timeout=10)
+            await send_stream.write_all(struct.pack(">I", len(payload)) + payload)
             await send_stream.finish()
             logger.info(
                 "[status.accept] delivered dashboard ({} bytes) to {}",
                 len(payload), remote[:12],
             )
         except Exception as exc:
-            logger.error("[status.accept] send failed: {}", exc)
+            logger.error("[status.accept] send failed: {}: {}", type(exc).__name__, exc)
         conn.close(0, b"done")
 
     async def shutdown(self) -> None:
@@ -265,23 +256,23 @@ class ContainerLogsProtocol:
 
     Wire protocol
     -------------
-    One bidirectional stream; client writes a request, server replies.
+    Two unidirectional streams: client → server (request), server → client (response).
 
     Flow:
-      1. Client: ``conn.open_bi()``
-      2. Server: verifies ``view_dashboard`` permission
-      3. Client: ``_write_framed(send, req_json)``
+      1. Client: ``conn.open_uni()`` → writes length-prefixed request JSON
              req  = ``{"cid": "<container_id_or_name>", "tail": <int>}``
-      4. Client: ``send.finish()``
-      5. Server: fetches logs from local docker-py client
-      6. Server: ``_write_framed(send, resp_json)``
+      2. Client: ``send.finish()``
+      3. Server: ``conn.accept_uni()`` → reads request
+      4. Server: fetches logs from local docker-py client
+      5. Server: ``conn.open_uni()`` → writes length-prefixed response JSON
              resp = ``{"logs": "<text>"}``  or  ``{"error": "<msg>"}``
-      7. Server: ``send.finish()``; ``conn.close(0, b"done")``
+      6. Server: ``send.finish()``; ``conn.close(0, b"done")``
+      7. Client: ``conn.accept_uni()`` → reads response
 
     Max payload: 4 MiB.
     Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
 
-    Auth: ``view_dashboard`` permission.
+    Auth: ``view_dashboard`` or ``monitor`` permission.
 
     Caller note
     -----------
@@ -316,27 +307,20 @@ class ContainerLogsProtocol:
             conn.close(403, reason.encode()[:120])
             return
 
-        try:
-            bi = await asyncio.wait_for(conn.accept_bi(), timeout=10)
-            recv_stream = bi.recv()
-            send_stream = bi.send()
-        except Exception as exc:
-            logger.warning("[logs.accept] stream open failed: {}", exc)
-            conn.close(500, b"stream error")
-            return
-
         engine = self._engine
         if engine is None:
             conn.close(500, b"engine not ready")
             return
 
         try:
+            recv_stream = await asyncio.wait_for(conn.accept_uni(), timeout=10)
             req_bytes = await asyncio.wait_for(_read_framed(recv_stream, 1024), timeout=10)
             req = json.loads(req_bytes.decode("utf-8"))
             cid = req.get("cid")
             if not cid or not isinstance(cid, str) or not _CONTAINER_REF_RE.match(cid):
                 payload = json.dumps({"error": "invalid container id"}).encode("utf-8")
-                await _write_framed(send_stream, payload)
+                send_stream = await asyncio.wait_for(conn.open_uni(), timeout=10)
+                await send_stream.write_all(struct.pack(">I", len(payload)) + payload)
                 await send_stream.finish()
                 return
             try:
@@ -349,7 +333,8 @@ class ContainerLogsProtocol:
             client = sc._docker_client if sc is not None else None
             if client is None:
                 payload = json.dumps({"error": "docker unavailable"}).encode("utf-8")
-                await _write_framed(send_stream, payload)
+                send_stream = await asyncio.wait_for(conn.open_uni(), timeout=10)
+                await send_stream.write_all(struct.pack(">I", len(payload)) + payload)
                 await send_stream.finish()
                 return
 
@@ -363,10 +348,11 @@ class ContainerLogsProtocol:
             except Exception as exc:
                 payload = json.dumps({"error": str(exc)}).encode("utf-8")
 
-            await _write_framed(send_stream, payload)
+            send_stream = await asyncio.wait_for(conn.open_uni(), timeout=10)
+            await send_stream.write_all(struct.pack(">I", len(payload)) + payload)
             await send_stream.finish()
         except Exception as exc:
-            logger.error("[logs.accept] failed: {}", exc)
+            logger.error("[logs.accept] failed: {}: {}", type(exc).__name__, exc)
         conn.close(0, b"done")
 
     async def shutdown(self) -> None:
@@ -467,20 +453,18 @@ class SyncProtocol:
 
     Wire protocol
     -------------
-    One bidirectional stream; client writes a request, server replies.
+    Two unidirectional streams: client → server (request), server → client (response).
 
     Flow:
-      1. Client: ``conn.open_bi()``
-      2. Server: verifies ``monitor`` permission
-      3. Client: ``_write_framed(send, req_json)``
+      1. Client: ``conn.open_uni()`` → writes length-prefixed request JSON
              req  = ``{"last_seen_timestamp": "<ISO-8601>"}``
-      4. Client: ``send.finish()``
-      5. Server: queries ``LogStore.get_sync_payload(since)``
-      6. Server: if payload > 32 MiB, falls back to daily-summary strategy
-      7. Server: ``_write_framed(send, resp_json)``
-             resp = ``{"raw_snapshots": [...], "events": [...],
-                       "sync_strategy": "recent"|"1hour"|"daily_fallback"}``
-      8. Server: ``send.finish()``; ``conn.close(0, b"sync done")``
+      2. Client: ``send.finish()``
+      3. Server: ``conn.accept_uni()`` → reads request
+      4. Server: queries ``LogStore.get_sync_payload(since)``
+      5. Server: if payload > 32 MiB, falls back to daily-summary strategy
+      6. Server: ``conn.open_uni()`` → writes length-prefixed response JSON
+      7. Server: ``send.finish()``; ``conn.close(0, b"sync done")``
+      8. Client: ``conn.accept_uni()`` → reads response
 
     Max payload: 32 MiB (``SYNC_RESPONSE_MAX``).
     Timeout: ``FETCH_TIMEOUT_SECONDS`` (30 s).
@@ -515,16 +499,7 @@ class SyncProtocol:
             return
 
         try:
-            bi = await asyncio.wait_for(conn.accept_bi(), timeout=10)
-            recv_stream = bi.recv()
-            send_stream = bi.send()
-        except Exception as exc:
-            logger.warning("[sync.accept] stream open failed: {}", exc)
-            conn.close(500, b"stream error")
-            return
-
-        try:
-            # Read the SyncRequest
+            recv_stream = await asyncio.wait_for(conn.accept_uni(), timeout=10)
             req_bytes = await asyncio.wait_for(
                 _read_framed(recv_stream, 4096), timeout=10
             )
@@ -539,20 +514,20 @@ class SyncProtocol:
             payload_bytes = json.dumps(payload).encode("utf-8")
 
             if len(payload_bytes) > SYNC_RESPONSE_MAX:
-                # Too large — send daily summaries only
                 payload["raw_snapshots"] = []
                 payload["buckets"] = engine._logstore._get_daily_summaries(last_seen)
                 payload["sync_strategy"] = "daily_fallback"
                 payload_bytes = json.dumps(payload).encode("utf-8")
 
-            await _write_framed(send_stream, payload_bytes)
+            send_stream = await asyncio.wait_for(conn.open_uni(), timeout=10)
+            await send_stream.write_all(struct.pack(">I", len(payload_bytes)) + payload_bytes)
             await send_stream.finish()
             logger.info(
                 "[sync.accept] delivered sync payload ({} bytes, strategy={}) to {}",
                 len(payload_bytes), payload.get("sync_strategy"), remote[:12],
             )
         except Exception as exc:
-            logger.error("[sync.accept] send failed: {}", exc)
+            logger.error("[sync.accept] send failed: {}: {}", type(exc).__name__, exc)
         conn.close(0, b"sync done")
 
     async def shutdown(self) -> None:
@@ -1544,15 +1519,19 @@ class MonitorEngine:
             conn = await asyncio.wait_for(
                 endpoint.connect(addr, SYNC_ALPN), timeout=FETCH_TIMEOUT_SECONDS
             )
+            conn.remote_node_id()  # force handshake — connect() returns a lazy handle
             try:
-                bi = await asyncio.wait_for(conn.open_bi(), timeout=FETCH_TIMEOUT_SECONDS)
-                send_stream = bi.send()
-                recv_stream = bi.recv()
+                send_stream = await asyncio.wait_for(
+                    conn.open_uni(), timeout=FETCH_TIMEOUT_SECONDS
+                )
                 request_body = json.dumps(
                     {"last_seen_timestamp": cursor.isoformat()}
                 ).encode("utf-8")
                 await _write_framed(send_stream, request_body)
                 await send_stream.finish()
+                recv_stream = await asyncio.wait_for(
+                    conn.accept_uni(), timeout=FETCH_TIMEOUT_SECONDS
+                )
                 payload_bytes = await asyncio.wait_for(
                     _read_framed(recv_stream, SYNC_RESPONSE_MAX),
                     timeout=FETCH_TIMEOUT_SECONDS,
@@ -1602,9 +1581,11 @@ class MonitorEngine:
         conn = await asyncio.wait_for(
             endpoint.connect(addr, STATUS_ALPN), timeout=FETCH_TIMEOUT_SECONDS
         )
+        conn.remote_node_id()  # force handshake — connect() returns a lazy handle
         try:
-            bi = await asyncio.wait_for(conn.open_bi(), timeout=FETCH_TIMEOUT_SECONDS)
-            recv_stream = bi.recv()
+            recv_stream = await asyncio.wait_for(
+                conn.accept_uni(), timeout=FETCH_TIMEOUT_SECONDS
+            )
             payload = await asyncio.wait_for(
                 _read_framed(recv_stream, STATUS_RESPONSE_MAX),
                 timeout=FETCH_TIMEOUT_SECONDS,
@@ -1634,13 +1615,15 @@ class MonitorEngine:
         conn = await asyncio.wait_for(
             endpoint.connect(addr, LOGS_ALPN), timeout=FETCH_TIMEOUT_SECONDS
         )
+        conn.remote_node_id()  # force handshake — connect() returns a lazy handle
         try:
-            bi = await asyncio.wait_for(conn.open_bi(), timeout=FETCH_TIMEOUT_SECONDS)
-            send_stream = bi.send()
-            recv_stream = bi.recv()
+            send_stream = await asyncio.wait_for(conn.open_uni(), timeout=FETCH_TIMEOUT_SECONDS)
             request_body = json.dumps({"cid": cid, "tail": tail}).encode("utf-8")
             await _write_framed(send_stream, request_body)
             await send_stream.finish()
+            recv_stream = await asyncio.wait_for(
+                conn.accept_uni(), timeout=FETCH_TIMEOUT_SECONDS
+            )
             payload = await asyncio.wait_for(
                 _read_framed(recv_stream, 4 * 1024 * 1024),  # 4 MiB max logs
                 timeout=FETCH_TIMEOUT_SECONDS,
