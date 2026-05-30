@@ -640,6 +640,9 @@ class MonitorEngine:
         logstore_path: Optional[Path] = None,
         include_docker: bool = True,
         dashboard_port: int = 42069,
+        # iroh node-refresh mitigation (see docs/network-resilience-roadmap.md A.2)
+        refresh_after_failures: int = 5,
+        refresh_cooldown_seconds: int = 60,
     ) -> None:
         self._secret_key = secret_key
         self._peers_path = peers_path
@@ -689,6 +692,15 @@ class MonitorEngine:
         # round-trip to SQLite on every 10-second stats tick.
         self._prev_containers_by_name: dict[str, dict] = {}
 
+        # iroh node-refresh mitigation: when a peer accumulates N consecutive
+        # pull failures (while still ALIVE per heartbeat), we tear down and
+        # rebuild ``self._iroh`` to escape a stuck path-picker state. See
+        # ``_maybe_rebuild_iroh`` and docs/network-resilience-roadmap.md A.2.
+        self._refresh_after_failures = max(0, refresh_after_failures)
+        self._refresh_cooldown_seconds = max(0, refresh_cooldown_seconds)
+        self._last_iroh_rebuild: Optional[datetime] = None
+        self._iroh_rebuild_lock: asyncio.Lock = asyncio.Lock()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -700,25 +712,15 @@ class MonitorEngine:
             self._state_locks[node_id] = lock
         return lock
 
-    async def init(self) -> None:
-        """Bring up the iroh node, load monitor targets, and start the scheduler."""
-        logger.debug("[init] setting uniffi event loop")
-        self.loop = asyncio.get_running_loop()
-        self._started_at = datetime.now(IST)
-        iroh.iroh_ffi.uniffi_set_event_loop(asyncio.get_running_loop())
+    async def _build_iroh_node(self) -> None:
+        """Construct (or reconstruct) ``self._iroh`` with fresh protocol creators.
 
-        logger.debug("[init] node_id={}", self._node_id_str[:16])
-
-        # Initialise stats subsystems (monitored role)
-        is_monitored = self._role in (NodeRole.MONITORED, NodeRole.BOTH)
-        if is_monitored:
-            self._stats_collector = StatsCollector(include_docker=self._include_docker)
-            from src.logstore import DEFAULT_LOGSTORE_PATH
-            ls_path = self._logstore_path or DEFAULT_LOGSTORE_PATH
-            self._logstore = LogStore(ls_path, own_node_id=self._node_id_str)
-            self._logstore.record_event(EV_AGENT_STARTED, {"node_id": self._node_id_str})
-            logger.info("[init] stats collector + logstore ready (role={})", self._role.value)
-
+        Called once from ``init()`` during startup, and again from
+        ``_maybe_rebuild_iroh()`` when we need to escape a stuck path-picker
+        state. Always uses brand-new ``*ProtocolCreator`` instances so the
+        rebuilt node owns clean handler objects with no stale references to
+        a torn-down predecessor.
+        """
         logger.debug("[init] creating iroh node with heartbeat protocol")
         options = iroh.NodeOptions()
         options.secret_key = self._secret_key
@@ -758,6 +760,112 @@ class MonitorEngine:
             raise RuntimeError("Ed25519 key derivation mismatch between iroh and PyNaCl")
 
         logger.info("Node started  id={}", self._node_id_str[:16])
+
+    async def _maybe_rebuild_iroh(self, trigger_peer_id: str) -> None:
+        """Tear down and rebuild ``self._iroh`` to escape a stuck path-picker.
+
+        Triggered when a peer accumulates ``self._refresh_after_failures``
+        consecutive pull failures while still ALIVE per heartbeat. Each
+        rebuild gives iroh a fresh discovery cache so its path picker
+        re-evaluates from scratch — in practice this means falling back to
+        the home relay (which we've empirically observed works) instead of
+        re-committing to a broken cached direct candidate.
+
+        Subject to a cooldown (``self._refresh_cooldown_seconds``) so a
+        sustained outage doesn't cause back-to-back rebuilds.
+
+        See plan: /home/pallav/.claude/plans/abundant-splashing-quasar.md
+        and docs/network-resilience-roadmap.md §A.2.
+        """
+        # Pre-lock cooldown check (cheap, avoids lock contention)
+        if self._last_iroh_rebuild is not None:
+            elapsed = (datetime.now(IST) - self._last_iroh_rebuild).total_seconds()
+            if elapsed < self._refresh_cooldown_seconds:
+                logger.debug(
+                    "[iroh-refresh] cooldown active ({:.0f}s < {}s), skipping",
+                    elapsed, self._refresh_cooldown_seconds,
+                )
+                return
+
+        async with self._iroh_rebuild_lock:
+            # Re-check cooldown under the lock — another task may have
+            # rebuilt between our pre-check and acquiring the lock.
+            if self._last_iroh_rebuild is not None:
+                elapsed = (datetime.now(IST) - self._last_iroh_rebuild).total_seconds()
+                if elapsed < self._refresh_cooldown_seconds:
+                    logger.debug(
+                        "[iroh-refresh] cooldown active ({:.0f}s < {}s), skipping",
+                        elapsed, self._refresh_cooldown_seconds,
+                    )
+                    return
+
+            logger.warning(
+                "[iroh-refresh] triggered: peer {} (status=ALIVE) reached {} "
+                "consecutive pull failures",
+                trigger_peer_id[:12], self._refresh_after_failures,
+            )
+            logger.info("[iroh-refresh] tearing down iroh node ...")
+
+            old_iroh = self._iroh
+            self._iroh = None
+            if old_iroh is not None:
+                try:
+                    await old_iroh.node().shutdown()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[iroh-refresh] shutdown error (continuing): {}: {}",
+                        type(exc).__name__, exc,
+                    )
+
+            # Brief drain so OS-level sockets release before we re-bind.
+            await asyncio.sleep(0.5)
+
+            try:
+                await self._build_iroh_node()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[iroh-refresh] rebuild FAILED: {}: {}. "
+                    "self._iroh remains None; next pull cycle will retry after cooldown.",
+                    type(exc).__name__, exc,
+                )
+                # Still stamp _last_iroh_rebuild so we respect cooldown even
+                # when the rebuild itself failed — prevents tight retry loops.
+                self._last_iroh_rebuild = datetime.now(IST)
+                return
+
+            # Reset all peers' pull-failure counters — the path picker is
+            # fresh now, every peer deserves a clean attempt.
+            reset_count = 0
+            for peer in self._devices.values():
+                if peer.consecutive_pull_failures > 0:
+                    peer.consecutive_pull_failures = 0
+                    reset_count += 1
+            self._last_iroh_rebuild = datetime.now(IST)
+            logger.info(
+                "[iroh-refresh] rebuild complete; resetting {} peer pull-failure counters",
+                reset_count,
+            )
+
+    async def init(self) -> None:
+        """Bring up the iroh node, load monitor targets, and start the scheduler."""
+        logger.debug("[init] setting uniffi event loop")
+        self.loop = asyncio.get_running_loop()
+        self._started_at = datetime.now(IST)
+        iroh.iroh_ffi.uniffi_set_event_loop(asyncio.get_running_loop())
+
+        logger.debug("[init] node_id={}", self._node_id_str[:16])
+
+        # Initialise stats subsystems (monitored role)
+        is_monitored = self._role in (NodeRole.MONITORED, NodeRole.BOTH)
+        if is_monitored:
+            self._stats_collector = StatsCollector(include_docker=self._include_docker)
+            from src.logstore import DEFAULT_LOGSTORE_PATH
+            ls_path = self._logstore_path or DEFAULT_LOGSTORE_PATH
+            self._logstore = LogStore(ls_path, own_node_id=self._node_id_str)
+            self._logstore.record_event(EV_AGENT_STARTED, {"node_id": self._node_id_str})
+            logger.info("[init] stats collector + logstore ready (role={})", self._role.value)
+
+        await self._build_iroh_node()
 
         self._devices = self._load_devices()
         logger.info("Dashboard loaded  monitor targets={}", len(self._devices))
@@ -1299,6 +1407,32 @@ class MonitorEngine:
         async with self._dashboard_pull_semaphore:
             await self._pull_one_peer_dashboard_inner(node_id)
 
+    def _record_pull_failure(self, state: "PeerState | None", node_id: str) -> None:
+        """Increment per-peer pull-failure counter and, if threshold reached
+        AND peer is ALIVE per heartbeat, schedule an iroh node rebuild.
+
+        Gated on ``current_status == ALIVE`` — when heartbeat already says
+        the peer is offline, pull failures are expected and shouldn't
+        trigger the rebuild mitigation (we'd just disrupt healthy peers).
+        """
+        if state is None:
+            return
+        state.consecutive_pull_failures += 1
+        if self._refresh_after_failures <= 0:
+            return  # feature disabled
+        if state.consecutive_pull_failures < self._refresh_after_failures:
+            return  # threshold not reached
+        if state.current_status != PeerStatus.ALIVE:
+            logger.debug(
+                "[iroh-refresh] skip: peer {} threshold reached but status={} "
+                "(pull failure expected for offline peer)",
+                node_id[:12], state.current_status.value,
+            )
+            return
+        task = asyncio.create_task(self._maybe_rebuild_iroh(node_id))
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
     async def _pull_one_peer_dashboard_inner(self, node_id: str) -> None:
         state = self._devices.get(node_id)
         since_seq = state.last_pulled_seq if state is not None else 0
@@ -1335,12 +1469,14 @@ class MonitorEngine:
                         "[stats-pull] {} relay retry also failed: {}: {}",
                         node_id[:12], type(exc2).__name__, msg2,
                     )
+                    self._record_pull_failure(state, node_id)
                     return
             else:
                 logger.info(
                     "[stats-pull] {} failed: {}: {}",
                     node_id[:12], type(exc).__name__, msg,
                 )
+                self._record_pull_failure(state, node_id)
                 return
         if resp is None:
             return
@@ -1355,6 +1491,9 @@ class MonitorEngine:
             for e in entries:
                 state.stats_history.append(e)
             state.last_pulled_seq = latest_seq
+            # Reset the pull-failure counter on success — peer is reachable
+            # for sustained streams, no rebuild trigger needed.
+            state.consecutive_pull_failures = 0
             if state.has_dashboard_gap:
                 state.has_dashboard_gap = False
 

@@ -235,6 +235,8 @@ panic-monitor --help
 | `--stats-interval SECS` | Stats collection interval (default: 10) |
 | `--down-after N` / `--up-after N` | Transition thresholds (default: 3/1) |
 | `--flap-min-dwell SECS` | Min seconds between alerts per peer (default: 60) |
+| `--refresh-after-failures N` | Per-peer pull failures (while ALIVE) before rebuilding the local iroh node. 0 disables. Default: 5 |
+| `--refresh-cooldown SECS` | Minimum seconds between iroh rebuilds (default: 60) |
 | `--dashboard-port PORT` | Flask dashboard (0 disables, default: 42069) |
 | `--status-bind HOST:PORT` | Status page (empty disables, default: 127.0.0.1:8080) |
 | `--no-docker` | Skip container stats |
@@ -283,10 +285,13 @@ candidate addresses. Your iroh tries it, and the packet routes through
 your own `docker0`, looping back to your machine instead of reaching the
 peer. Heartbeat survives (single packet); sustained stream pulls fail.
 Confirm with `sudo tcpdump -i lo -nn 'udp and host 172.17.0.1'` -- if you
-see your own loopback traffic during pulls, this is the issue. Workaround:
-`sudo ip link set docker0 down` for a quick test (containers become
-unreachable until you bring it back up). Long-term fix is upstream
-(iroh filtering private addresses from discovery). Tracked in
+see your own loopback traffic during pulls, this is the issue. The daemon
+auto-mitigates this: after `--refresh-after-failures` (default 5)
+consecutive pull failures to an ALIVE peer, it rebuilds the local iroh
+node to escape the stuck path-picker. Watch for `[iroh-refresh]` log
+lines. To verify the rebuild path manually:
+`sudo ip link set docker0 down` (containers become unreachable until
+restored). Upstream fix tracked in
 [docs/network-resilience-roadmap.md](docs/network-resilience-roadmap.md).
 
 **Invalid Node ID** -- Node IDs are Curve25519 public keys. Use the value
@@ -308,5 +313,6 @@ panic-monitor --init && panic-monitor --install-service
 - **Iroh handles NAT** -- no public IPs or port forwarding required
 - **Five custom ALPNs** -- heartbeat, push, status, logs, sync (see [docs/protocols/](docs/protocols/))
 - **Uni-stream protocol** -- request/response over two unidirectional QUIC streams (bi-streams proved unreliable in iroh 0.35.0 Python bindings)
+- **Adaptive transport recovery** -- per-peer pull-failure counter (gated on heartbeat ALIVE). After N failures the engine rebuilds the local iroh node to reset a stuck path-picker, with a cooldown to bound repeated rebuilds. Tunable via `--refresh-after-failures` / `--refresh-cooldown`.
 - **Concurrency** -- one asyncio loop (iroh + scheduler), threads for control socket and HTTP dashboards
 - **Retention** -- raw snapshots 2h, 5-min buckets 30d, hourly + daily summaries indefinitely

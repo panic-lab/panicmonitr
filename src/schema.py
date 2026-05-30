@@ -63,6 +63,7 @@ class PeerState:
         "last_seen",
         "consecutive_failures",
         "consecutive_successes",
+        "consecutive_pull_failures",
         "current_status",
         "last_fail_reason",
         "cached_node_addr",
@@ -84,6 +85,12 @@ class PeerState:
         self.last_seen: Optional[datetime] = None
         self.consecutive_failures: int = 0
         self.consecutive_successes: int = 0
+        # Per-peer counter for outbound stats-pull failures. Distinct from
+        # consecutive_failures (which tracks heartbeat probes). Reset on a
+        # successful pull, incremented after both direct + relay retries
+        # exhaust. Used by MonitorEngine to trigger an iroh node rebuild
+        # when iroh's path picker is stuck on a broken direct candidate.
+        self.consecutive_pull_failures: int = 0
         self.current_status: PeerStatus = PeerStatus.UNKNOWN
         self.last_fail_reason: Optional[str] = None
         self.cached_node_addr: object | None = None  # iroh.NodeAddr

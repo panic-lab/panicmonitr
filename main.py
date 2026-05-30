@@ -139,6 +139,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--down-after", type=int, default=3, help="Consecutive failed probes before DEAD (default: 3)")
     parser.add_argument("--up-after", type=int, default=1, help="Consecutive successes before ALIVE again (default: 1)")
     parser.add_argument("--flap-min-dwell", type=int, default=60, help="Minimum seconds between webhook firings for the same peer (default: 60)")
+    parser.add_argument("--refresh-after-failures", type=int, default=5,
+                        help="Consecutive stats-pull failures (per peer, while peer is ALIVE) before rebuilding the local iroh node to escape a stuck path-picker. 0 disables. Default: 5")
+    parser.add_argument("--refresh-cooldown", type=int, default=60,
+                        help="Minimum seconds between iroh node rebuilds. Default: 60")
     parser.add_argument("--status-bind", type=str, default="127.0.0.1:8080", help="HTTP dashboard bind (host:port, or empty string to disable). Default: 127.0.0.1:8080")
     parser.add_argument("--push-to", type=str, action="append", default=None, metavar="NODE_ID", help="Push a heartbeat to this peer every --interval seconds (repeatable; for behind-NAT setups)")
     parser.add_argument("--force-fresh", action="store_true", help="Wipe legacy account/mesh artifacts during --init")
@@ -890,6 +894,8 @@ def cli_main() -> None:
         logstore_path=args.logstore_db,
         dashboard_port=args.dashboard_port,
         include_docker=not args.no_docker,
+        refresh_after_failures=args.refresh_after_failures,
+        refresh_cooldown_seconds=args.refresh_cooldown,
     )
 
     if args.fetch_dashboard:
