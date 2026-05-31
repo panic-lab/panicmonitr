@@ -162,123 +162,129 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--text-dim); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-.shell { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
+.shell { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.2rem; }
 
-/* ─── Header: ASCII banner + meta bar ───────────────────────────────── */
+/* ─── Brand banner (compact) ────────────────────────────────────────── */
 .banner {
   color: var(--accent-title);
   text-shadow: var(--glow);
-  max-width: 720px;
-  margin: 0 auto 8px;
-  width: 95%;
+  max-width: 440px;
+  margin: 0 auto 6px;
+  width: 80%;
 }
 .tagline {
   text-align: center;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   color: var(--text-muted);
   letter-spacing: 3px;
   text-transform: uppercase;
-  margin-bottom: 18px;
+  margin-bottom: 6px;
 }
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-.meta .nodeid { color: var(--text-bright); font-weight: 500; letter-spacing: 0; text-transform: none; }
-.meta .role { color: var(--accent-light); }
-.meta .live-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background: var(--teal); margin-right:6px; box-shadow: 0 0 6px var(--teal); animation: blink 1.6s ease-in-out infinite; }
-.meta .live-dot.stale { background: var(--red); box-shadow: 0 0 6px var(--red); }
-.meta .live-dot.paused { background: var(--text-muted); box-shadow: none; animation: none; }
 
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
-.controls { display: flex; align-items: center; gap: 10px; font-size: 0.72rem; }
-.controls label { color: var(--text-dim); letter-spacing: 1px; }
+/* ─── Global status bar (sticky) ────────────────────────────────────── */
+.global-bar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; flex-wrap: wrap; gap: 12px 20px;
+  align-items: center; justify-content: space-between;
+  padding: 12px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  box-shadow: var(--shadow);
+}
+.global-bar.operational { border-left-color: var(--teal); }
+.global-bar.degraded    { border-left-color: var(--accent-light); }
+.global-bar.down        { border-left-color: var(--red); }
+
+.gb-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gb-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.global-bar.operational .gb-dot { background: var(--teal); box-shadow: 0 0 10px var(--teal); }
+.global-bar.degraded    .gb-dot { background: var(--accent-light); box-shadow: 0 0 10px var(--accent-light); }
+.global-bar.down        .gb-dot { background: var(--red); box-shadow: 0 0 10px var(--red); animation: blink 1.2s ease-in-out infinite; }
+.gb-status { font-size: 0.9rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-bright); }
+.gb-counts { font-size: 0.7rem; color: var(--text-muted); letter-spacing: 1px; }
+.gb-counts b { color: var(--text-bright); font-weight: 600; }
+.gb-counts .c-dead { color: var(--red); }
+.gb-counts .c-maint { color: var(--accent-light); }
+.gb-worst { font-size: 0.68rem; color: var(--text-muted); letter-spacing: 0.5px; }
+.gb-worst b { color: var(--accent-light); font-weight: 600; }
+.gb-worst.ok b { color: var(--teal); }
+
+.gb-right { display: flex; align-items: center; gap: 12px; font-size: 0.7rem; color: var(--text-muted); }
+.gb-right .live-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background: var(--teal); margin-right:6px; box-shadow: 0 0 6px var(--teal); animation: blink 1.6s ease-in-out infinite; }
+.gb-right .live-dot.stale { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.gb-right .live-dot.paused { background: var(--text-muted); box-shadow: none; animation: none; }
+.gb-right .nodeid { color: var(--text-bright); letter-spacing: 0; }
+
+.controls { display: flex; align-items: center; gap: 8px; }
+.controls label { color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; font-size: 0.6rem; }
 .controls select {
   background: var(--panel-strong); color: var(--text-bright);
   border: 1px solid var(--border); padding: 4px 8px; font-family: inherit;
-  font-size: 0.72rem; cursor: pointer; outline: none;
+  font-size: 0.68rem; cursor: pointer; outline: none;
 }
 .controls select:hover { border-color: var(--border-strong); }
 .btn {
   background: transparent; border: 1px solid var(--accent); color: var(--accent);
-  font-family: inherit; font-size: 0.65rem; font-weight: 600;
-  padding: 4px 12px; cursor: pointer; letter-spacing: 2px; text-transform: uppercase;
+  font-family: inherit; font-size: 0.62rem; font-weight: 600;
+  padding: 4px 10px; cursor: pointer; letter-spacing: 2px; text-transform: uppercase;
   transition: all 0.15s;
 }
 .btn:hover { background: var(--accent); color: var(--bg-primary); box-shadow: var(--glow); }
 
-/* ─── Fleet Cards ───────────────────────────────────────────────────── */
-.fleet-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.2rem;
-}
+/* ─── Layout: sidebar monitor list + detail pane ────────────────────── */
+/* Both columns are wrapped in translucent "tray" panels (paniclab design
+   language: rgba(18,18,24,.x) over the grid, subtle border, hard shadow) so
+   the cards read as sitting *inside* an organized surface rather than
+   floating on the page background. */
+.layout { display: grid; grid-template-columns: 250px 1fr; gap: 1.2rem; align-items: start; }
+@media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
 
-.node-card {
-  border: 2px solid var(--border);
-  background: var(--panel);
-  padding: 18px;
+.tray {
+  background: rgba(18, 18, 24, 0.55);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow);
-  position: relative;
-  transition: all 0.2s;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  backdrop-filter: blur(4px);
 }
-.node-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-.node-card.selected { border-color: var(--accent-light); box-shadow: var(--glow); }
 
-.node-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.node-alias { font-size: 1rem; font-weight: 600; color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-id-short { font-size: 0.62rem; color: var(--text-dim); }
+.sidebar { display: flex; flex-direction: column; gap: 5px; position: sticky; top: 72px; padding: 12px; }
+@media (max-width: 820px) { .sidebar { position: static; } }
+.side-label { font-size: 0.58rem; color: var(--text-muted); letter-spacing: 2px; text-transform: uppercase; padding: 4px 2px 6px; }
 
-.node-status { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.mon-row {
+  display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center;
+  padding: 9px 11px; border: 1px solid var(--border); background: var(--panel);
+  cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.mon-row:hover { border-color: var(--accent); }
+.mon-row.selected { border-color: var(--accent-light); box-shadow: var(--glow); background: var(--panel-strong); }
+.mon-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+.mon-dot.ALIVE { background: var(--teal); box-shadow: 0 0 6px var(--teal); }
+.mon-dot.DEAD  { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.mon-dot.UNKNOWN, .mon-dot.UNREACHABLE { background: var(--text-muted); }
+.mon-dot.maint { background: var(--accent-light); box-shadow: 0 0 6px var(--accent-light); }
+.mon-name { min-width: 0; }
+.mon-name .nm { display: block; color: var(--text-bright); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon-name .sub { display: block; font-size: 0.55rem; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+.mon-up { font-size: 0.68rem; font-variant-numeric: tabular-nums; text-align: right; }
 .status-pill { padding: 2px 8px; font-size: 0.6rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; border: 1px solid currentColor; border-radius: 2px; }
 .status-pill.ALIVE { color: var(--teal); }
 .status-pill.DEAD { color: var(--red); }
-.status-pill.UNKNOWN { color: var(--text-muted); }
+.status-pill.UNKNOWN, .status-pill.UNREACHABLE { color: var(--text-muted); }
+.status-pill.maint { color: var(--accent-light); }
 
-.node-mini-stats { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.mini-bar { display: flex; align-items: center; gap: 8px; font-size: 0.65rem; color: var(--text-muted); }
-.mini-bar-track { flex: 1; height: 4px; background: var(--panel-strong); border-radius: 2px; overflow: hidden; }
-.mini-bar-fill { height: 100%; transition: width 0.3s ease; }
-.mini-bar-fill.cpu { background: var(--teal); }
-.mini-bar-fill.mem { background: var(--violet); }
-.mini-bar-fill.disk { background: rgb(74, 125, 181); }
-
-/* ─── Detailed View (Node Dashboard) ────────────────────────────────── */
-.detail-view {
+/* ─── Detail pane (Node Dashboard) ──────────────────────────────────── */
+.detail-pane {
   display: flex;
   flex-direction: column;
   gap: 1.2rem;
+  min-width: 0;          /* allow grid child to shrink instead of overflow */
+  padding: 18px 18px 22px;
   animation: fadeIn 0.3s ease-out;
 }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-.detail-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-.detail-header h2 { font-size: 1.2rem; color: var(--accent-title); letter-spacing: 1px; }
-.back-btn { font-size: 0.7rem; color: var(--text-muted); cursor: pointer; text-transform: uppercase; letter-spacing: 1px; border: 1px solid var(--border); padding: 4px 8px; }
-.back-btn:hover { color: var(--text-bright); border-color: var(--text-muted); }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 .card {
   border: 2px solid var(--border);
@@ -293,6 +299,14 @@ body {
   color: var(--accent); font-size: 0.65rem; font-weight: 600;
   letter-spacing: 2px; text-transform: uppercase;
 }
+.card-action {
+  position: absolute; top: -10px; right: 16px;
+  background: var(--panel); padding: 0 10px;
+  color: var(--text-muted); font-size: 0.62rem; font-weight: 600;
+  letter-spacing: 1.5px; text-transform: uppercase; cursor: pointer;
+  border: 0; font-family: inherit; transition: color 0.15s;
+}
+.card-action:hover { color: var(--accent-light); text-shadow: var(--glow); }
 
 .bars { display: flex; flex-direction: column; gap: 9px; }
 .bar-row { display: grid; grid-template-columns: 46px 1fr 56px; align-items: center; gap: 12px; }
@@ -311,6 +325,7 @@ body {
 .sysmeta strong { color: var(--text-bright); font-weight: 500; }
 
 .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+.grid-two.start { align-items: start; }   /* cards hug their content height */
 @media (max-width: 900px) { .grid-two { grid-template-columns: 1fr; } }
 
 .chart-host { width: 100%; min-height: 240px; }
@@ -411,12 +426,58 @@ footer.foot {
 
 /* ─── Uptime Section ────────────────────────────────────────────────── */
 .uptime-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-bottom: 1.2rem; }
-.uptime-tile { border: 1px solid var(--border); background: var(--panel-strong); padding: 10px; display: flex; flex-direction: column; gap: 2px; }
-.uptime-tile .k { font-size: 0.58rem; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+.uptime-tile { border: 1px solid var(--border); background: var(--panel-strong); padding: 10px; display: flex; flex-direction: column; gap: 3px; }
+.uptime-tile .k { font-size: 0.6rem; color: rgb(190, 182, 166); font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
 .uptime-tile .v { font-size: 0.9rem; font-weight: 600; color: var(--text-bright); }
 .uptime-good { color: var(--teal); }
 .uptime-warn { color: var(--accent-light); }
 .uptime-bad { color: var(--red); }
+.uptime-tile.window .v { font-size: 1.05rem; }
+
+/* ─── Detail header (name + status pill) ────────────────────────────── */
+.dh { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 4px 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.dh h2 { font-size: 1.25rem; color: var(--accent-title); letter-spacing: 1px; }
+.dh .dh-id { font-size: 0.66rem; color: var(--text-dim); }
+.dh .dh-spacer { flex: 1; }
+
+/* ─── Heartbeat bar ─────────────────────────────────────────────────── */
+.hb-bar { display: flex; gap: 2px; align-items: stretch; height: 38px; margin-top: 4px; }
+.hb { flex: 1 1 0; min-width: 2px; max-width: 10px; border-radius: 1px; background: var(--text-faint); transition: opacity 0.15s; }
+.hb.up   { background: var(--teal); }
+.hb.down { background: var(--red); }
+.hb:hover { opacity: 0.65; }
+.hb-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 0.6rem; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+.hb-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 1px; margin-right: 5px; vertical-align: middle; }
+.hb-legend .sw.up { background: var(--teal); }
+.hb-legend .sw.down { background: var(--red); }
+.hb-legend .sw.none { background: var(--text-faint); }
+
+/* ─── Latency sparkline ─────────────────────────────────────────────── */
+/* The latency card is a flex column so the sparkline grows to fill whatever
+   height the row takes (matched to the incidents card beside it via the grid's
+   default align-items:stretch) — no dead space below the graph. */
+#latency-card { display: flex; flex-direction: column; }
+.spark-host { width: 100%; flex: 1; min-height: 178px; display: flex; }
+.spark { width: 100%; height: 100%; display: block; }
+.spark path.line { fill: none; stroke: var(--accent-light); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark path.area { fill: rgba(248, 168, 62, 0.08); stroke: none; }
+.spark-meta { display: flex; gap: 18px; margin-top: 8px; font-size: 0.64rem; color: var(--text-muted); }
+.spark-meta b { color: var(--text-bright); font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* ─── Incident log ──────────────────────────────────────────────────── */
+/* Height-capped to roughly match the latency card beside it and scrolled
+   internally — the list is dynamically sized (can be hundreds of rows), so
+   bounding it here keeps the row balanced and never wastes the column. */
+.incidents-list { display: flex; flex-direction: column; gap: 6px; max-height: 212px; overflow-y: auto; padding-right: 4px; }
+.incidents-list::-webkit-scrollbar { width: 6px; }
+.inc-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 7px 10px; border: 1px solid var(--border-soft); background: var(--bg-secondary); font-size: 0.7rem; }
+.inc-row.ongoing { border-color: rgba(224, 85, 85, 0.5); }
+.inc-badge { font-size: 0.56rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+.inc-row.ongoing .inc-badge { color: var(--red); }
+.inc-when { color: var(--text-muted); }
+.inc-when b { color: var(--text-primary); font-weight: 500; }
+.inc-dur { color: var(--text-bright); font-variant-numeric: tabular-nums; text-align: right; }
+.inc-row.ongoing .inc-dur { color: var(--red); }
 
 </style>
 </head>
@@ -426,46 +487,80 @@ footer.foot {
   <div class="banner">{{ ascii_svg | safe }}</div>
   <div class="tagline">peer-to-peer health monitor // local-first</div>
 
-  <div class="meta">
-    <div>
-      <span class="live-dot" id="live-dot"></span>
-      <span id="status-text">connecting…</span>
-      <span style="margin: 0 12px; color: var(--text-faint);">|</span>
-      role: <span class="role" id="role-val">—</span>
-      <span style="margin: 0 12px; color: var(--text-faint);">|</span>
-      node: <span class="nodeid" id="node-val">—</span>
+  <!-- Global status bar (sticky) -->
+  <div class="global-bar" id="global-bar">
+    <div class="gb-left">
+      <span class="gb-dot"></span>
+      <span class="gb-status" id="gb-status">connecting…</span>
+      <span class="gb-counts" id="gb-counts"></span>
     </div>
-    <div class="controls">
-      <label for="interval">refresh</label>
-      <select id="interval">
-        <option value="2000">2s</option>
-        <option value="5000" selected>5s</option>
-        <option value="10000">10s</option>
-        <option value="30000">30s</option>
-        <option value="60000">1m</option>
-        <option value="0">paused</option>
-      </select>
-      <button class="btn" id="refresh-now">[Refresh]</button>
+    <div class="gb-worst" id="gb-worst"></div>
+    <div class="gb-right">
+      <span><span class="live-dot" id="live-dot"></span><span id="status-text">connecting…</span></span>
+      <span style="color: var(--text-faint)">|</span>
+      <span>node: <span class="nodeid" id="node-val">—</span></span>
+      <div class="controls">
+        <label for="interval">refresh</label>
+        <select id="interval">
+          <option value="2000">2s</option>
+          <option value="5000" selected>5s</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+          <option value="60000">1m</option>
+          <option value="0">paused</option>
+        </select>
+        <button class="btn" id="refresh-now">[Refresh]</button>
+      </div>
     </div>
   </div>
 
-  <!-- Fleet View -->
-  <div id="fleet-view" class="fleet-grid"></div>
+  <div class="layout">
+    <!-- Monitor list (sidebar) -->
+    <div class="sidebar tray" id="sidebar"></div>
 
-  <!-- Detail View (hidden by default) -->
-  <div id="detail-view" class="detail-view" style="display:none">
-    <div class="detail-header">
-      <div class="back-btn" id="back-to-fleet">&larr; Back to Fleet</div>
-      <h2 id="detail-node-name">Node Name</h2>
-      <span id="detail-node-id" style="font-size:0.7rem; color:var(--text-dim)"></span>
-    </div>
+    <!-- Detail pane (always shows the selected node) -->
+    <div class="detail-pane tray" id="detail-pane">
+      <div class="dh">
+        <h2 id="detail-node-name">—</h2>
+        <span class="status-pill" id="detail-status">—</span>
+        <span class="dh-id" id="detail-node-id"></span>
+        <span class="dh-spacer"></span>
+        <span class="dh-id" id="detail-role"></span>
+      </div>
 
-    <div class="uptime-tiles">
-      <div class="uptime-tile"><span class="k">24h Uptime</span><span class="v" id="dt-up-24h">—</span></div>
-      <div class="uptime-tile"><span class="k">Last Seen</span><span class="v" id="dt-seen">—</span></div>
-      <div class="uptime-tile"><span class="k">RTT</span><span class="v" id="dt-rtt">—</span></div>
-      <div class="uptime-tile"><span class="k">Sync</span><span class="v" id="dt-sync">—</span></div>
-    </div>
+      <div class="uptime-tiles">
+        <div class="uptime-tile window"><span class="k">24h Uptime</span><span class="v" id="up-24h">—</span></div>
+        <div class="uptime-tile window"><span class="k">7d Uptime</span><span class="v" id="up-7d">—</span></div>
+        <div class="uptime-tile window"><span class="k">30d Uptime</span><span class="v" id="up-30d">—</span></div>
+        <div class="uptime-tile"><span class="k">Last Seen</span><span class="v" id="dt-seen">—</span></div>
+        <div class="uptime-tile"><span class="k">RTT</span><span class="v" id="dt-rtt">—</span></div>
+        <div class="uptime-tile"><span class="k">Sync</span><span class="v" id="dt-sync">—</span></div>
+      </div>
+
+      <div class="card" id="heartbeat-card">
+        <div class="card-label">[Heartbeat &mdash; last 50 probes]</div>
+        <div class="hb-bar" id="hb-bar"></div>
+        <div class="hb-legend">
+          <span><span class="sw up"></span>up</span>
+          <span><span class="sw down"></span>down</span>
+          <span><span class="sw none"></span>no data</span>
+          <span id="hb-summary" style="margin-left:auto; color:var(--text-muted)"></span>
+        </div>
+      </div>
+
+      <div class="grid-two">
+        <div class="card" id="latency-card">
+          <div class="card-label">[Latency &mdash; RTT trend]</div>
+          <div class="spark-host" id="spark-host"></div>
+          <div class="spark-meta" id="spark-meta"></div>
+        </div>
+        <div class="card" id="incidents-card">
+          <div class="card-label">[Incidents &mdash; 30d]</div>
+          <a class="card-action" id="inc-viewall" target="_blank" rel="noopener" style="display:none">view all &#8599;</a>
+          <div class="incidents-list" id="incidents-list"></div>
+          <div class="empty" id="incidents-empty" style="display:none">no outages recorded</div>
+        </div>
+      </div>
 
     <div class="grid-two">
       <div class="card" id="system-card">
@@ -544,7 +639,9 @@ footer.foot {
       <div class="containers" id="containers"></div>
       <div class="empty" id="containers-empty" style="display:none">no containers reported</div>
     </div>
-  </div>
+
+    </div><!-- /detail-pane -->
+  </div><!-- /layout -->
 
   <footer class="foot">panic-monitor // p2p mesh // built on iroh</footer>
 </div>
@@ -555,11 +652,12 @@ footer.foot {
 
   // ── State ───────────────────────────────────────────────────────────
   const POLL_KEY = 'panic-monitor.poll-interval';
+  const SELECT_KEY = 'panic-monitor.selected-node';
   let pollMs = parseInt(localStorage.getItem(POLL_KEY) || '5000', 10);
   let pollHandle = null;
   let inFlight = false;
   let chartReady = false;
-  let selectedNodeId = null;
+  let selectedNodeId = localStorage.getItem(SELECT_KEY) || null;
   let ownNodeId = null;
   let nodes = [];
   // Startup grace: suppress "STALE" for the first 15 s after page load.
@@ -568,19 +666,36 @@ footer.foot {
   // the user sees a flash of red "STALE" before the first successful poll.
   const STARTUP_GRACE_MS = 15000;
   const pageLoadedAt = Date.now();
+  const HB_SLOTS = 50;  // heartbeat bar width (one block per probe)
 
   // ── Element refs ────────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
-  const fleetView = $('fleet-view');
-  const detailView = $('detail-view');
-  const backToFleet = $('back-to-fleet');
+  const sidebar = $('sidebar');
 
+  // Global status bar
+  const globalBar = $('global-bar');
+  const gbStatus = $('gb-status');
+  const gbCounts = $('gb-counts');
+  const gbWorst = $('gb-worst');
   const liveDot = $('live-dot');
   const statusText = $('status-text');
-  const roleVal = $('role-val');
   const nodeVal = $('node-val');
   const intervalEl = $('interval');
   const refreshBtn = $('refresh-now');
+
+  // Detail header + window tiles
+  const detailName = $('detail-node-name');
+  const detailStatus = $('detail-status');
+  const detailId = $('detail-node-id');
+  const detailRole = $('detail-role');
+  const up24 = $('up-24h'), up7 = $('up-7d'), up30 = $('up-30d');
+  const dtSeen = $('dt-seen'), dtRtt = $('dt-rtt'), dtSync = $('dt-sync');
+
+  // Heartbeat / latency / incidents
+  const hbBar = $('hb-bar'), hbSummary = $('hb-summary');
+  const sparkHost = $('spark-host'), sparkMeta = $('spark-meta');
+  const incList = $('incidents-list'), incEmpty = $('incidents-empty');
+  const incViewAll = $('inc-viewall');
 
   const barCpu = $('bar-cpu'), valCpu = $('val-cpu');
   const barMem = $('bar-mem'), valMem = $('val-mem');
@@ -599,8 +714,6 @@ footer.foot {
   const procSummary = $('proc-summary');
 
   const chartHost = $('chart-cpu-mem');
-
-  const dtUp24 = $('dt-up-24h'), dtSeen = $('dt-seen'), dtRtt = $('dt-rtt'), dtSync = $('dt-sync');
 
   // Persisted UI preferences for the processes table.
   const PROC_SORT_KEY = 'panic-monitor.proc-sort';
@@ -675,96 +788,206 @@ footer.foot {
   }
 
   // ── Navigation ──────────────────────────────────────────────────────
-  function showFleet() {
-    abortAllLogRequests();
-    selectedNodeId = null;
-    detailView.style.display = 'none';
-    fleetView.style.display = 'grid';
-    chartReady = false;
-  }
-
   function selectNode(nid) {
+    if (!nid || nid === selectedNodeId) {
+      // Still ensure the pane reflects this node (first selection).
+      if (nid && nid === selectedNodeId) return;
+    }
     abortAllLogRequests();
     selectedNodeId = nid;
-    fleetView.style.display = 'none';
-    detailView.style.display = 'flex';
+    localStorage.setItem(SELECT_KEY, nid);
     chartReady = false;
+    for (const el of sidebar.querySelectorAll('.mon-row'))
+      el.classList.toggle('selected', el.dataset.id === nid);
     paintDetails();
   }
 
-  backToFleet.onclick = showFleet;
-
   // ── Renderers ───────────────────────────────────────────────────────
-  function paintFleet() {
-    const visibleNodes = nodes.filter(n => getNodeId(n));
-    if (!visibleNodes.length) {
-      fleetView.innerHTML = '<div class="empty" data-id="__empty">no nodes reported</div>';
+  // Global status bar: the "is everything ok?" layer. One dot + word, the
+  // up/down/maint tally, and the single worst-uptime node — all derived from
+  // the server-side `fleet` block so the browser does no aggregation.
+  function renderGlobalBar(d) {
+    const f = (d && d.fleet) || {};
+    const status = f.status || 'operational';
+    globalBar.className = 'global-bar ' + status;
+    const label = status === 'down' ? 'service down'
+                : status === 'degraded' ? 'maintenance'
+                : 'all operational';
+    setText(gbStatus, label);
+    let counts = `<b>${f.alive || 0}</b> up · <b class="c-dead">${f.dead || 0}</b> down`;
+    if (f.maintenance) counts += ` · <b class="c-maint">${f.maintenance}</b> maint`;
+    if (f.total != null) counts += ` · ${f.total} monitored`;
+    gbCounts.innerHTML = counts;
+    const w = f.worst_uptime_24h;
+    if (w && w.value != null) {
+      const ok = w.value >= 99;
+      gbWorst.className = 'gb-worst' + (ok ? ' ok' : '');
+      gbWorst.innerHTML = `worst 24h: <b>${escapeHtml(w.alias || 'unnamed')} ${fmtPct(w.value)}</b>`;
+    } else {
+      gbWorst.className = 'gb-worst';
+      gbWorst.innerHTML = '';
+    }
+  }
+
+  // Sidebar monitor list. Rebuilt each poll (cheap for a small fleet); the
+  // human eye finds the one red dot in a column of green ones instantly.
+  function paintSidebar() {
+    const visible = nodes.filter(n => getNodeId(n));
+    if (!visible.length) {
+      sidebar.innerHTML = '<div class="side-label">Monitors</div>'
+        + '<div class="empty">no nodes</div>';
       return;
     }
-    const existing = new Map();
-    for (const el of fleetView.children) existing.set(el.dataset.id, el);
-    const seen = new Set();
-    let prevEl = null;
-
-    for (const node of visibleNodes) {
+    const rows = visible.map(node => {
       const nid = getNodeId(node);
       const status = node.status || 'UNKNOWN';
-      seen.add(nid);
-      let el = existing.get(nid);
-      if (!el) {
-        el = document.createElement('div');
-        el.className = 'node-card';
-        el.dataset.id = nid;
-        el.onclick = () => selectNode(nid);
-        el.innerHTML = `
-          <div class="node-header">
-            <div class="node-alias">${escapeHtml(node.alias || 'unnamed')}</div>
-            <div class="node-id-short">${nid.slice(0, 8)}...</div>
-          </div>
-          <div class="node-status">
-            <span class="status-pill ${status}">${status}</span>
-            <span style="font-size:0.6rem; color:var(--text-dim)">${node.is_local ? 'LOCAL' : 'PEER'}</span>
-          </div>
-          <div class="node-mini-stats">
-            <div class="mini-bar"><div class="mini-bar-track"><div class="mini-bar-fill cpu"></div></div>CPU</div>
-            <div class="mini-bar"><div class="mini-bar-track"><div class="mini-bar-fill mem"></div></div>MEM</div>
-            <div class="mini-bar"><div class="mini-bar-track"><div class="mini-bar-fill disk"></div></div>DISK</div>
-          </div>
-        `;
+      const maint = !!node.in_maint;
+      const dotCls = maint ? 'maint' : status;
+      const sel = nid === selectedNodeId ? ' selected' : '';
+      let up;
+      if (node.is_local) {
+        up = '<span class="mon-up uptime-good">live</span>';
+      } else {
+        const u = node.uptime_24h;
+        up = `<span class="mon-up ${upClass(u)}">${u == null ? '—' : fmtPct(u)}</span>`;
       }
-      const next = prevEl ? prevEl.nextSibling : fleetView.firstChild;
-      if (el !== next) fleetView.insertBefore(el, next);
-      prevEl = el;
+      return `<div class="mon-row${sel}" data-id="${escapeHtml(nid)}">`
+        + `<span class="mon-dot ${dotCls}"></span>`
+        + `<span class="mon-name"><span class="nm">${escapeHtml(node.alias || 'unnamed')}</span>`
+        + `<span class="sub">${node.is_local ? 'local' : 'peer'}</span></span>`
+        + up + `</div>`;
+    });
+    sidebar.innerHTML = '<div class="side-label">Monitors</div>' + rows.join('');
+    for (const el of sidebar.querySelectorAll('.mon-row'))
+      el.onclick = () => selectNode(el.dataset.id);
+  }
 
-      const stats = node.last_stats || {};
-      el.querySelector('.mini-bar-fill.cpu').style.width = (stats.cpu_percent || 0) + '%';
-      el.querySelector('.mini-bar-fill.mem').style.width = (stats.mem_percent || 0) + '%';
-      el.querySelector('.mini-bar-fill.disk').style.width = (stats.disk_percent || 0) + '%';
-
-      const statusEl = el.querySelector('.status-pill');
-      statusEl.className = 'status-pill ' + status;
-      statusEl.textContent = status;
-      el.querySelector('.node-alias').textContent = node.alias || 'unnamed';
-      el.querySelector('.node-id-short').textContent = nid.slice(0, 8) + '...';
+  // Heartbeat bar — one block per probe, chronological left→right, newest on
+  // the right. Left-padded with empty slots so the bar width is stable.
+  function renderHeartbeat(node) {
+    if (node.is_local) {
+      hbBar.innerHTML = '<div class="empty" style="flex:1;padding:8px">local node — liveness is not self-probed</div>';
+      setText(hbSummary, '');
+      return;
     }
+    const beats = node.beats || [];
+    if (!beats.length) {
+      hbBar.innerHTML = '<div class="empty" style="flex:1;padding:8px">no probe history yet</div>';
+      setText(hbSummary, '');
+      return;
+    }
+    const slots = [];
+    for (let i = 0; i < HB_SLOTS - beats.length; i++) slots.push(null);
+    for (const b of beats) slots.push(b);
+    hbBar.innerHTML = slots.map(b => {
+      if (!b) return '<div class="hb"></div>';
+      const rtt = b.rtt_ms != null ? b.rtt_ms.toFixed(1) + 'ms' : 'no response';
+      const when = b.ts ? new Date(b.ts).toLocaleString() : '';
+      return `<div class="hb ${b.up ? 'up' : 'down'}" title="${escapeHtml(when)} · ${b.up ? 'up' : 'down'} · ${escapeHtml(rtt)}"></div>`;
+    }).join('');
+    const upCount = beats.filter(b => b.up).length;
+    setText(hbSummary, `${upCount}/${beats.length} up`);
+  }
 
-    for (const [id, el] of existing) if (!seen.has(id)) el.remove();
+  // Latency sparkline — inline SVG polyline over RTT of successful probes.
+  // A rising trend is the early-warning before a service actually falls over.
+  function renderSparkline(node) {
+    if (node.is_local) { sparkHost.innerHTML = ''; setText(sparkMeta, 'local node'); return; }
+    const beats = (node.beats || []).filter(b => b.up && b.rtt_ms != null);
+    if (beats.length < 2) {
+      sparkHost.innerHTML = '<div class="empty" style="padding:16px">not enough latency samples</div>';
+      sparkMeta.innerHTML = '';
+      return;
+    }
+    const vals = beats.map(b => b.rtt_ms);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const W = 100, H = 30, n = vals.length;
+    const pts = vals.map((v, i) => {
+      const x = n === 1 ? 0 : (i / (n - 1)) * W;
+      const y = H - ((v - min) / span) * H;
+      return x.toFixed(2) + ' ' + y.toFixed(2);
+    });
+    const line = 'M' + pts.join(' L');
+    const area = 'M0 ' + H + ' L' + pts.join(' L') + ' L' + W + ' ' + H + ' Z';
+    sparkHost.innerHTML = `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`
+      + `<path class="area" d="${area}"/><path class="line" d="${line}"/></svg>`;
+    const rs = node.rtt_stats || {};
+    const f = (v) => v == null ? '—' : v.toFixed(1) + 'ms';
+    sparkMeta.innerHTML = `cur <b>${f(vals[vals.length - 1])}</b> · avg <b>${f(rs.rtt_avg)}</b>`
+      + ` · min <b>${f(rs.rtt_min)}</b> · max <b>${f(rs.rtt_max)}</b>`;
+  }
+
+  // Incident log — timestamped outages derived from probe transitions.
+  function renderIncidents(node) {
+    if (node.is_local) {
+      incList.innerHTML = '';
+      incViewAll.style.display = 'none';
+      incEmpty.style.display = 'block';
+      incEmpty.textContent = 'local node — not probed';
+      return;
+    }
+    const list = node.incidents || [];
+    if (!list.length) {
+      incList.innerHTML = '';
+      incViewAll.style.display = 'none';
+      incEmpty.style.display = 'block';
+      incEmpty.textContent = 'no outages recorded';
+      return;
+    }
+    incEmpty.style.display = 'none';
+    // The card only holds the recent slice; the full, unscrolled history lives
+    // on a dedicated page so you can read days of incidents without scrubbing.
+    incViewAll.href = '/incidents/' + encodeURIComponent(getNodeId(node));
+    incViewAll.style.display = 'block';
+    incList.innerHTML = list.map(inc => {
+      const start = new Date(inc.started);
+      const dur = fmtUptime(inc.duration_s);
+      if (inc.ongoing) {
+        return `<div class="inc-row ongoing"><span class="inc-badge">● ongoing</span>`
+          + `<span class="inc-when">since <b>${escapeHtml(start.toLocaleString())}</b></span>`
+          + `<span class="inc-dur">${escapeHtml(dur)}</span></div>`;
+      }
+      const end = new Date(inc.ended);
+      return `<div class="inc-row"><span class="inc-badge">down</span>`
+        + `<span class="inc-when"><b>${escapeHtml(start.toLocaleString())}</b> → ${escapeHtml(end.toLocaleTimeString())}</span>`
+        + `<span class="inc-dur">${escapeHtml(dur)}</span></div>`;
+    }).join('');
   }
 
   function paintDetails() {
     if (!selectedNodeId) return;
     const node = nodes.find(n => getNodeId(n) === selectedNodeId);
-    if (!node) { showFleet(); return; }
+    if (!node) {
+      // Selected node vanished (revoked / went away). Fall back to the first.
+      if (nodes.length) selectNode(getNodeId(nodes[0]));
+      return;
+    }
     const nid = getNodeId(node);
+    const status = node.status || 'UNKNOWN';
 
-    setText($('detail-node-name'), node.alias || 'Unnamed Node');
-    setText($('detail-node-id'), nid);
+    setText(detailName, node.alias || 'Unnamed Node');
+    setText(detailId, nid.slice(0, 12) + '…' + nid.slice(-4));
+    detailStatus.className = 'status-pill ' + (node.in_maint ? 'maint' : status);
+    detailStatus.textContent = node.in_maint ? 'MAINT' : status;
+    setText(detailRole, node.is_local ? 'this node' : (node.tags || 'peer'));
 
-    setText(dtUp24, fmtPct(node.uptime_24h));
-    dtUp24.className = 'v ' + upClass(node.uptime_24h);
-    setText(dtSeen, node.last_seen || 'active');
+    // Multi-window uptime. For the local node we don't probe ourselves, so the
+    // windows read "live" rather than a misleading percentage.
+    const setUp = (el, v) => { setText(el, v == null ? '—' : fmtPct(v)); el.className = 'v ' + upClass(v); };
+    if (node.is_local) {
+      for (const el of [up24, up7, up30]) { setText(el, 'live'); el.className = 'v uptime-good'; }
+    } else {
+      const uw = node.uptime || {};
+      setUp(up24, uw['24h']); setUp(up7, uw['7d']); setUp(up30, uw['30d']);
+    }
+    setText(dtSeen, node.is_local ? 'now' : (node.last_seen || 'active'));
     setText(dtRtt, node.rtt || '—');
     setText(dtSync, node.sync_status || 'live');
+
+    renderHeartbeat(node);
+    renderSparkline(node);
+    renderIncidents(node);
 
     const s = node.last_stats;
     if (s) {
@@ -1024,20 +1247,19 @@ footer.foot {
       const r = await fetch('/api/dashboard', { cache: 'no-store' });
       const d = await r.json();
       ownNodeId = getNodeId(d);
-      setText(roleVal, d.role || '—');
       setText(nodeVal, ownNodeId ? ownNodeId.slice(0, 12) + '...' + ownNodeId.slice(-4) : '—');
 
-      // Build unified nodes list
+      // Build unified nodes list — local node pinned first, peers after.
       const localNode = ownNodeId ? {
           node_id: ownNodeId,
-          alias: 'local-node',
+          alias: (d.own_stats && d.own_stats.hostname) || 'local node',
           status: 'ALIVE',
           is_local: true,
           last_stats: d.own_stats,
           stats_history: d.chart ? d.chart.timestamps.map((ts, i) => ({
             ts, cpu_percent: d.chart.cpu[i], mem_percent: d.chart.mem[i]
           })) : [],
-          uptime_24h: d.avg_uptime_24h,
+          uptime_24h: null,
           sync_status: 'live',
         } : null;
       const peers = Array.isArray(d.peers) ? d.peers : [];
@@ -1046,8 +1268,17 @@ footer.foot {
         ...peers.map(p => ({ ...p, node_id: getNodeId(p), is_local: false }))
       ].filter(n => n && getNodeId(n));
 
-      paintFleet();
-      if (selectedNodeId) paintDetails();
+      renderGlobalBar(d);
+
+      // Default / repair the selection: keep the current one if it still
+      // exists, else fall back to the local node (first in the list).
+      if (!selectedNodeId || !nodes.some(n => getNodeId(n) === selectedNodeId)) {
+        selectedNodeId = nodes.length ? getNodeId(nodes[0]) : null;
+        if (selectedNodeId) localStorage.setItem(SELECT_KEY, selectedNodeId);
+      }
+
+      paintSidebar();
+      paintDetails();
 
       statusText.textContent = 'live · ' + new Date().toLocaleTimeString();
       liveDot.className = 'live-dot';
@@ -1099,6 +1330,161 @@ def _rel(dt: Optional[datetime]) -> str:
     return f"{delta // 86400}d ago"
 
 
+# Node IDs are 64-hex Ed25519 keys; allow the short (12-hex) form too so the
+# dashboard's truncated ids still resolve. Strictly hex to keep the URL surface
+# defensive — the value is only ever used as a SQLite query parameter.
+_NODE_ID_RE = re.compile(r"^[0-9a-fA-F]{8,64}$")
+
+
+def _fmt_dur(seconds: float | int | None) -> str:
+    s = int(seconds or 0)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s"
+    if s < 86400:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    return f"{s // 86400}d {(s % 86400) // 3600}h"
+
+
+def _fmt_dt(iso: Optional[str]) -> str:
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return iso
+    # e.g. "May 29, 2026 · 4:06:44 PM" — strip the zero-pad on the hour.
+    return dt.strftime("%b %d, %Y · %I:%M:%S %p").replace("· 0", "· ")
+
+
+def _esc(s: object) -> str:
+    return (
+        str(s if s is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _build_incidents_page(alias: str, nid: str, incidents: list[dict]) -> str:
+    """Render the standalone full-history incident page (server-side, no JS).
+
+    A focused reading view: every outage for one node, newest first, with a
+    summary header — so you can review days of incidents without scrubbing the
+    height-capped card on the dashboard.
+    """
+    total = len(incidents)
+    total_down = sum(int(i.get("duration_s") or 0) for i in incidents)
+    longest = max((int(i.get("duration_s") or 0) for i in incidents), default=0)
+    ongoing = any(i.get("ongoing") for i in incidents)
+
+    if incidents:
+        rows = []
+        for inc in incidents:
+            on = bool(inc.get("ongoing"))
+            badge = "● ongoing" if on else "down"
+            ended = "— ongoing —" if on else _fmt_dt(inc.get("ended"))
+            rows.append(
+                f'<tr class="{"ongoing" if on else ""}">'
+                f'<td class="badge">{_esc(badge)}</td>'
+                f'<td class="started">{_esc(_fmt_dt(inc.get("started")))}</td>'
+                f'<td class="ended">{_esc(ended)}</td>'
+                f'<td class="dur">{_esc(_fmt_dur(inc.get("duration_s")))}</td>'
+                f"</tr>"
+            )
+        body = (
+            '<table class="inc"><thead><tr>'
+            "<th>Status</th><th>Started</th><th>Recovered</th><th>Duration</th>"
+            "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+        )
+    else:
+        body = '<div class="empty">No outages recorded in the last 30 days.</div>'
+
+    status_line = (
+        '<span class="now down">● currently down</span>'
+        if ongoing
+        else '<span class="now ok">● currently up</span>'
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>incidents · {_esc(alias)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {{
+  --bg: rgb(10,10,14); --panel: rgba(18,18,24,0.6); --panel-strong: rgba(24,24,32,0.9);
+  --bright: rgb(235,228,214); --text: rgb(190,182,166); --muted: rgb(148,136,115); --dim: rgb(96,86,70);
+  --accent: rgb(235,145,50); --accent-light: rgb(248,168,62);
+  --teal: rgb(42,192,168); --red: rgb(224,85,85);
+  --border: rgba(255,240,210,0.08); --border-soft: rgba(255,240,210,0.04);
+  --shadow: 4px 4px 0 rgba(0,0,0,0.5);
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{
+  background-color: var(--bg);
+  background-image: linear-gradient(rgba(255,240,200,.038) 1px,transparent 1px),linear-gradient(90deg,rgba(255,240,200,.038) 1px,transparent 1px);
+  background-size: 32px 32px;
+  color: var(--text); font-family:'JetBrains Mono',monospace; font-size:13px; line-height:1.6;
+  padding: 32px 20px 60px; min-height:100vh;
+}}
+::selection {{ background: var(--accent); color: var(--bright); }}
+::-webkit-scrollbar {{ width:10px; height:10px; }}
+::-webkit-scrollbar-track {{ background: var(--bg); }}
+::-webkit-scrollbar-thumb {{ background: var(--accent); }}
+.shell {{ max-width: 900px; margin:0 auto; display:flex; flex-direction:column; gap:1.2rem; }}
+.head {{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; padding-bottom:14px; border-bottom:1px solid var(--border); }}
+.head a.back {{ color: var(--muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:1px; border:1px solid var(--border); padding:5px 10px; }}
+.head a.back:hover {{ color: var(--bright); border-color: var(--muted); }}
+.head h1 {{ font-size:1.4rem; color: var(--accent-light); letter-spacing:1px; text-transform:none; font-weight:700; }}
+.head .nid {{ font-size:0.66rem; color: var(--dim); }}
+.head .spacer {{ flex:1; }}
+.now {{ font-size:0.72rem; letter-spacing:1px; text-transform:uppercase; }}
+.now.ok {{ color: var(--teal); }}
+.now.down {{ color: var(--red); }}
+.tiles {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }}
+.tile {{ border:1px solid var(--border); background: var(--panel-strong); padding:14px; box-shadow: var(--shadow); display:flex; flex-direction:column; gap:4px; }}
+.tile .k {{ font-size:0.6rem; color: var(--muted); letter-spacing:1px; text-transform:uppercase; }}
+.tile .v {{ font-size:1.3rem; font-weight:700; color: var(--bright); }}
+.tile .v.red {{ color: var(--red); }}
+.panel {{ border:1px solid var(--border); background: var(--panel); box-shadow: var(--shadow); padding:4px 0; }}
+table.inc {{ width:100%; border-collapse:collapse; }}
+table.inc th {{ text-align:left; padding:12px 18px; font-size:0.6rem; font-weight:600; color: var(--dim); letter-spacing:1.5px; text-transform:uppercase; border-bottom:1px solid var(--border); }}
+table.inc th:last-child, table.inc td:last-child {{ text-align:right; }}
+table.inc td {{ padding:11px 18px; border-bottom:1px solid var(--border-soft); font-size:0.78rem; }}
+table.inc tr:last-child td {{ border-bottom:0; }}
+table.inc tr:hover td {{ background: rgba(255,240,210,0.02); }}
+table.inc .badge {{ font-size:0.58rem; letter-spacing:1.5px; text-transform:uppercase; color: var(--dim); white-space:nowrap; }}
+table.inc tr.ongoing .badge {{ color: var(--red); }}
+table.inc tr.ongoing td {{ color: var(--red); }}
+table.inc .started {{ color: var(--bright); }}
+table.inc .ended {{ color: var(--muted); }}
+table.inc .dur {{ color: var(--accent-light); font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.empty {{ padding:48px; text-align:center; color: var(--dim); letter-spacing:1px; }}
+.foot {{ text-align:center; font-size:0.6rem; color: var(--dim); letter-spacing:2px; text-transform:uppercase; padding-top:20px; }}
+</style></head>
+<body><div class="shell">
+  <div class="head">
+    <a class="back" href="/">&larr; dashboard</a>
+    <h1>{_esc(alias)}</h1>
+    <span class="nid">{_esc(nid)}</span>
+    <span class="spacer"></span>
+    {status_line}
+  </div>
+  <div class="tiles">
+    <div class="tile"><span class="k">Outages (30d)</span><span class="v">{total}</span></div>
+    <div class="tile"><span class="k">Total downtime</span><span class="v{' red' if total_down else ''}">{_esc(_fmt_dur(total_down))}</span></div>
+    <div class="tile"><span class="k">Longest outage</span><span class="v">{_esc(_fmt_dur(longest))}</span></div>
+  </div>
+  <div class="panel">{body}</div>
+  <div class="foot">panic-monitor // incident history // last 30 days</div>
+</div></body></html>"""
+
+
 # ---------------------------------------------------------------------------
 # WebApp class
 # ---------------------------------------------------------------------------
@@ -1138,6 +1524,33 @@ class WebApp:
         @self._app.route("/api/dashboard")
         def api_dashboard():
             return jsonify(self._build_dashboard())
+
+        @self._app.route("/incidents/<nid>")
+        def incidents_page(nid):
+            if not _NODE_ID_RE.match(nid or ""):
+                return "invalid node id", 400
+            if engine.history is None:
+                return "history store unavailable", 503
+            # Resolve a friendly name: prefer the live peer alias, fall back to
+            # the trust record, then to a short id.
+            alias = None
+            try:
+                for st in engine.get_device_states():
+                    if st.entry.node_id == nid:
+                        alias = st.entry.alias
+                        break
+                if alias is None:
+                    tp = engine.trust.get_peer(nid)
+                    alias = tp.alias if tp is not None else None
+            except Exception:  # noqa: BLE001
+                alias = None
+            alias = alias or (nid[:12] + "…")
+            try:
+                incidents = engine.history.incidents(nid, hours=720, limit=2000)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[webapp] incidents page query failed: {}", exc)
+                incidents = []
+            return _build_incidents_page(alias, nid, incidents)
 
         @self._app.route("/api/container/<cid>/logs")
         def api_container_logs(cid):
@@ -1266,6 +1679,25 @@ class WebApp:
         uptimes = [p["uptime_24h"] for p in peers if p["uptime_24h"] is not None]
         avg_uptime_24h = round(sum(uptimes) / len(uptimes), 2) if uptimes else None
 
+        # Fleet-wide summary for the sticky global status bar. `status` answers
+        # "is everything ok" before any scanning: down if any peer is DEAD,
+        # degraded if any is in maintenance (but none dead), else operational.
+        if dead > 0:
+            fleet_status = "down"
+        elif maint > 0:
+            fleet_status = "degraded"
+        else:
+            fleet_status = "operational"
+        # The single node dragging the fleet down — surfaced so the operator
+        # sees the weakest link without opening anything. Maintenance peers are
+        # excluded (their downtime is expected/intentional).
+        worst = None
+        for p in peers:
+            if p["in_maint"] or p["uptime_24h"] is None:
+                continue
+            if worst is None or p["uptime_24h"] < worst["value"]:
+                worst = {"alias": p["alias"], "value": p["uptime_24h"]}
+
         probes_24h = None
         try:
             if engine.history is not None:
@@ -1300,6 +1732,14 @@ class WebApp:
             },
             "avg_uptime_24h": avg_uptime_24h,
             "probes_24h": probes_24h,
+            "fleet": {
+                "status": fleet_status,
+                "alive": alive,
+                "dead": dead,
+                "maintenance": maint,
+                "total": len(peers),
+                "worst_uptime_24h": worst,
+            },
             "own_stats": own_stats,
             "processes": processes,
             "peers": peers,
@@ -1330,6 +1770,23 @@ class WebApp:
                 )
             except Exception:  # noqa: BLE001
                 uptime = None
+            # Multi-window uptime, heartbeat beats, and derived incidents for
+            # the Kuma-style monitoring elements. Each is best-effort — a
+            # missing HistoryStore or a transient query error must never break
+            # the whole dashboard payload, so every call is guarded.
+            uptime_windows: dict = {}
+            beats: list = []
+            incidents: list = []
+            rtt_stats: dict = {}
+            try:
+                if engine.history is not None:
+                    nid = state.entry.node_id
+                    uptime_windows = engine.history.uptime_windows(nid)
+                    beats = engine.history.recent_beats(nid, limit=50)
+                    incidents = engine.history.incidents(nid)
+                    rtt_stats = engine.history.rtt_stats(nid, hours=24)
+            except Exception:  # noqa: BLE001
+                pass
             sync_status = getattr(state, "sync_status", SyncStatus.LIVE)
             try:
                 _sh = list(state.stats_history) if state.stats_history else []
@@ -1346,6 +1803,10 @@ class WebApp:
                 "in_maint": in_maint,
                 "rtt": rtt,
                 "uptime_24h": uptime,
+                "uptime": uptime_windows,
+                "beats": beats,
+                "incidents": incidents,
+                "rtt_stats": rtt_stats,
                 "last_seen": _rel(state.last_seen),
                 "tags": ", ".join(trusted.tags) if trusted and trusted.tags else None,
                 "last_stats": state.last_stats,

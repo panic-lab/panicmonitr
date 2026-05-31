@@ -282,6 +282,102 @@ class HistoryStore:
                     buckets[idx] = 100.0 * (ok or 0) / total
         return buckets
 
+    def recent_beats(self, node_id: str, limit: int = 50) -> list[dict]:
+        """Return the last *limit* probes as heartbeat blocks, oldest→newest.
+
+        Shaped for the dashboard heartbeat bar: each entry is
+        ``{"ts": <iso>, "rtt_ms": <float|None>, "up": <bool>}``. We select the
+        newest rows (``ORDER BY ts DESC LIMIT``) then reverse, so the bar reads
+        chronologically left→right with the most recent beat on the right.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT ts, rtt_ms, status FROM probes "
+                "WHERE node_id = ? ORDER BY ts DESC LIMIT ?",
+                (node_id, limit),
+            )
+            rows = cur.fetchall()
+        rows.reverse()
+        return [
+            {
+                "ts": _from_epoch(ts).isoformat(),
+                "rtt_ms": rtt,
+                "up": status == PeerStatus.ALIVE.value,
+            }
+            for ts, rtt, status in rows
+        ]
+
+    def incidents(
+        self, node_id: str, hours: int = 720, limit: int = 20
+    ) -> list[dict]:
+        """Derive outage incidents from status transitions over *hours*.
+
+        An ``ALIVE→DEAD`` edge opens an incident; the next ``DEAD→ALIVE`` edge
+        closes it. An incident still open at the newest probe is ``ongoing``.
+        No incident table is stored — this is computed from the probe rows.
+
+        Returns newest-first, capped to *limit*:
+        ``{"started": <iso>, "ended": <iso|None>, "duration_s": <int>,
+           "ongoing": <bool>}``.
+        """
+        cutoff = datetime.now(IST) - timedelta(hours=hours)
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT ts, status FROM probes "
+                "WHERE node_id = ? AND ts >= ? ORDER BY ts ASC",
+                (node_id, _to_epoch(cutoff)),
+            )
+            rows = cur.fetchall()
+
+        incidents: list[dict] = []
+        open_start: int | None = None
+        prev_status: str | None = None
+        for ts, status in rows:
+            down = status != PeerStatus.ALIVE.value
+            was_down = prev_status is not None and prev_status != PeerStatus.ALIVE.value
+            if down and not was_down:
+                open_start = ts
+            elif not down and was_down and open_start is not None:
+                incidents.append(
+                    {
+                        "started": _from_epoch(open_start).isoformat(),
+                        "ended": _from_epoch(ts).isoformat(),
+                        "duration_s": max(0, ts - open_start),
+                        "ongoing": False,
+                    }
+                )
+                open_start = None
+            prev_status = status
+
+        if open_start is not None and rows:
+            last_ts = rows[-1][0]
+            incidents.append(
+                {
+                    "started": _from_epoch(open_start).isoformat(),
+                    "ended": None,
+                    "duration_s": max(0, last_ts - open_start),
+                    "ongoing": True,
+                }
+            )
+
+        incidents.reverse()
+        return incidents[:limit]
+
+    def uptime_windows(
+        self, node_id: str, now: datetime | None = None
+    ) -> dict[str, float | None]:
+        """Return uptime % for the dashboard's standard windows.
+
+        ``{"24h": …, "7d": …, "30d": …}`` — ``None`` for a window with no
+        probes. Thin wrapper over :meth:`uptime_percent`.
+        """
+        now = now or datetime.now(IST)
+        return {
+            "24h": self.uptime_percent(node_id, timedelta(hours=24), now),
+            "7d": self.uptime_percent(node_id, timedelta(days=7), now),
+            "30d": self.uptime_percent(node_id, timedelta(days=30), now),
+        }
+
     def rtt_stats(self, node_id: str, hours: int = 24) -> dict:
         """Return {probes, alive, dead, rtt_min, rtt_max, rtt_avg} over *hours*.
 

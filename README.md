@@ -1,15 +1,32 @@
 # Panic Monitor
 
-A zero-infrastructure, peer-to-peer health monitoring daemon. Each node is
-sovereign -- there's no central server. Nodes form a flat-peer mesh over
-[Iroh](https://iroh.computer/) QUIC connections, and access control is an
-append-only, cryptographically signed log per node.
+> Sovereign, peer-to-peer health monitoring for your homelab -- no central
+> server, no open ports, no cloud. Free and open source.
+
+Most fleet monitors make you stand up a server, open a port, or hand your
+metrics to someone else's cloud. Panic Monitor doesn't. It's a peer-to-peer
+health monitor for the homelab where every node *is* the infrastructure -- no
+central server, no broker, no SaaS, nothing to forward. Each box runs one daemon
+with its own cryptographic identity, finds its peers directly over an encrypted
+mesh, punches through NAT on its own, and falls back to relay only when it has
+to. From any node you get the whole fleet at a glance -- live CPU, memory, disk,
+containers, processes, and logs pulled straight off each peer, plus uptime
+windows, heartbeat history, and an incident log so you can see not just *what's*
+down but *what happened*. Authority is explicit and signed: peers trust each
+other by key, and every capability is a grant you make, not a port you expose.
+You hold the keys, you own the data, and there's no one in the middle -- by
+design, not as an upsell.
+
+Each node is sovereign -- there's no central server. Nodes form a flat-peer
+mesh over [Iroh](https://iroh.computer/) QUIC connections, and access control is
+an append-only, cryptographically signed log per node.
 
 - **Heartbeat probing** with configurable thresholds, flap suppression, and webhook alerts
-- **Live dashboard** at `http://127.0.0.1:42069/` -- single-page, auto-refreshing
+- **At-a-glance dashboard** at `http://127.0.0.1:42069/` -- global status bar, monitor sidebar, multi-window uptime (24h/7d/30d), heartbeat history, latency sparkline, and an incident log
 - **System stats** -- CPU, memory, disk, load, temperature, top-N processes
 - **Docker diagnostics** -- per-container CPU/MEM/net/block-IO, ports, mounts, health, logs
-- **Cross-device stats** -- pull live stats from peers over iroh QUIC
+- **Cross-device stats** -- pull live stats from peers over iroh QUIC, delta-synced
+- **Self-healing transport** -- detects and escapes broken/colliding peer addresses (stale IPv6, `docker0` collisions) automatically
 - **Cryptographic audit trail** -- every trust mutation and state transition is signed
 - **Local-first storage** -- SQLite history + logstore, no external services
 
@@ -125,8 +142,19 @@ Two HTTP surfaces, both loopback-only, no auth:
 | 8080 | stdlib `http.server` | Lightweight status page + `/status.json` |
 
 The main dashboard at `:42069` renders once and polls JSON. Scroll position,
-expanded containers, and hover state survive every refresh. See
-[docs/dashboard.md](docs/dashboard.md) for the full UI reference.
+expanded containers, and hover state survive every refresh. The layout is built
+for glancing, not reading:
+
+- **Global status bar** (sticky) -- one dot answering "is everything okay?",
+  an up/down/maintenance tally, and the single worst-uptime node.
+- **Monitor sidebar** -- every node as a colour-coded row; anomalies pop.
+- **Per-node detail** -- multi-window uptime (24h/7d/30d), a heartbeat bar
+  (one block per probe), a latency sparkline, an incident log, plus the full
+  system/process/container/log depth.
+- **Incident history** -- a dedicated full-history page at
+  `/incidents/<node_id>` for reading days of outages without scrubbing.
+
+See [docs/dashboard.md](docs/dashboard.md) for the full UI reference.
 
 ```fish
 panic-monitor --daemon --dashboard-port 0    # disable Flask dashboard
@@ -316,3 +344,21 @@ panic-monitor --init && panic-monitor --install-service
 - **Adaptive transport recovery** -- per-peer pull-failure counter (gated on heartbeat ALIVE). After N failures the engine rebuilds the local iroh node to reset a stuck path-picker, with a cooldown to bound repeated rebuilds. Tunable via `--refresh-after-failures` / `--refresh-cooldown`.
 - **Concurrency** -- one asyncio loop (iroh + scheduler), threads for control socket and HTTP dashboards
 - **Retention** -- raw snapshots 2h, 5-min buckets 30d, hourly + daily summaries indefinitely
+
+---
+
+## Roadmap
+
+**Sovereign remote execution.** Run a command across your whole fleet --
+peer-to-peer, no central control plane, no inbound ports -- riding the same
+mesh that already handles NAT traversal. Execution will be a *distinct, stronger*
+capability than read-only monitoring: signed commands, a dedicated per-peer
+`exec` grant, and a full audit trail. The same trust log that governs who can
+*see* what will govern who can *do* what.
+
+---
+
+## Free & open source
+
+Panic Monitor is FOSS, local-first, and yours. No telemetry, no accounts, no
+upstream service -- you hold the keys and own the data, by design.
