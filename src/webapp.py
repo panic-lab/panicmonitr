@@ -32,6 +32,12 @@ try:
 except ImportError:
     _FLASK_OK = False
 
+try:
+    from flask_sock import Sock
+    _SOCK_OK = True
+except ImportError:
+    _SOCK_OK = False
+
 import re
 
 # 64-char (long) or 12-char (short) docker container IDs, plus a permissive
@@ -112,6 +118,9 @@ _HTML = """<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <style>
 :root {
   --bg-primary: rgb(12, 11, 15);
@@ -233,6 +242,18 @@ body {
   transition: all 0.15s;
 }
 .btn:hover { background: var(--accent); color: var(--bg-primary); box-shadow: var(--glow); }
+
+/* ─── Terminal ──────────────────────────────────────────────────────── */
+.term-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.term-status { font-size: 0.62rem; color: var(--text-dim); letter-spacing: 1px; }
+.term-status.connected { color: var(--accent); }
+.term-status.error { color: var(--red); }
+.term-host {
+  height: 420px; background: #000; border: 1px solid var(--panel-strong);
+  border-radius: 4px; padding: 6px;
+}
+.term-note { margin-top: 8px; font-size: 0.6rem; color: var(--text-dim); }
+.term-note code { color: var(--accent); }
 
 /* ─── Layout: sidebar monitor list + detail pane ────────────────────── */
 /* Both columns are wrapped in translucent "tray" panels (paniclab design
@@ -640,6 +661,17 @@ footer.foot {
       <div class="empty" id="containers-empty" style="display:none">no containers reported</div>
     </div>
 
+    <div class="card" id="terminal-card">
+      <div class="card-label">[Terminal]</div>
+      <div class="term-controls">
+        <button class="btn" id="term-open">Open shell</button>
+        <button class="btn" id="term-close" style="display:none">Disconnect</button>
+        <span class="term-status" id="term-status">not connected</span>
+      </div>
+      <div class="term-host" id="term-host" style="display:none"></div>
+      <div class="term-note">Live PTY over iroh. Requires the <code>shell</code> permission granted by the remote node.</div>
+    </div>
+
     </div><!-- /detail-pane -->
   </div><!-- /layout -->
 
@@ -794,6 +826,7 @@ footer.foot {
       if (nid && nid === selectedNodeId) return;
     }
     abortAllLogRequests();
+    closeTerminal();
     selectedNodeId = nid;
     localStorage.setItem(SELECT_KEY, nid);
     chartReady = false;
@@ -801,6 +834,116 @@ footer.foot {
       el.classList.toggle('selected', el.dataset.id === nid);
     paintDetails();
   }
+
+  // ── Terminal (interactive remote shell over WebSocket) ───────────────
+  const TERM_DATA = 0x00, TERM_RESIZE = 0x01, TERM_CLOSE = 0x02, TERM_EXIT = 0x03;
+  const termState = { term: null, fit: null, ws: null, ro: null, nid: null };
+  const termHost = $('term-host');
+  const termOpenBtn = $('term-open');
+  const termCloseBtn = $('term-close');
+  const termStatusEl = $('term-status');
+
+  function setTermStatus(text, cls) {
+    termStatusEl.textContent = text;
+    termStatusEl.className = 'term-status' + (cls ? ' ' + cls : '');
+  }
+
+  function sendResize() {
+    const t = termState.term, ws = termState.ws;
+    if (!t || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const b = new Uint8Array(5);
+    b[0] = TERM_RESIZE;
+    new DataView(b.buffer).setUint16(1, t.rows);
+    new DataView(b.buffer).setUint16(3, t.cols);
+    ws.send(b);
+  }
+
+  function openTerminal(nid) {
+    if (typeof Terminal === 'undefined') {
+      setTermStatus('xterm.js failed to load', 'error');
+      return;
+    }
+    closeTerminal();
+    termState.nid = nid;
+    termHost.style.display = 'block';
+    termOpenBtn.style.display = 'none';
+    termCloseBtn.style.display = 'inline-block';
+    setTermStatus('connecting...');
+
+    const term = new Terminal({
+      fontFamily: 'JetBrains Mono, monospace', fontSize: 13,
+      cursorBlink: true, scrollback: 5000,
+      theme: { background: '#000000' },
+    });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(termHost);
+    fit.fit();
+    termState.term = term;
+    termState.fit = fit;
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(proto + '://' + location.host + '/api/node/' + nid + '/shell');
+    ws.binaryType = 'arraybuffer';
+    termState.ws = ws;
+    const enc = new TextEncoder();
+
+    ws.onopen = () => {
+      setTermStatus('connected', 'connected');
+      sendResize();
+      term.focus();
+    };
+    ws.onmessage = (ev) => {
+      const u = new Uint8Array(ev.data);
+      if (!u.length) return;
+      const tag = u[0];
+      if (tag === TERM_DATA) {
+        term.write(u.subarray(1));
+      } else if (tag === TERM_EXIT) {
+        term.write(String.fromCharCode(13, 10) + '[session ended]' + String.fromCharCode(13, 10));
+        setTermStatus('session ended');
+        try { ws.close(); } catch (e) {}
+      }
+    };
+    ws.onerror = () => setTermStatus('connection error', 'error');
+    ws.onclose = () => { if (termState.ws === ws) setTermStatus('disconnected'); };
+
+    term.onData((d) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const payload = enc.encode(d);
+      const frame = new Uint8Array(payload.length + 1);
+      frame[0] = TERM_DATA;
+      frame.set(payload, 1);
+      ws.send(frame);
+    });
+    term.onResize(() => sendResize());
+
+    const ro = new ResizeObserver(() => { try { fit.fit(); } catch (e) {} });
+    ro.observe(termHost);
+    termState.ro = ro;
+  }
+
+  function closeTerminal() {
+    if (termState.ws) {
+      try {
+        if (termState.ws.readyState === WebSocket.OPEN) {
+          termState.ws.send(new Uint8Array([TERM_CLOSE]));
+        }
+        termState.ws.close();
+      } catch (e) {}
+    }
+    if (termState.ro) { try { termState.ro.disconnect(); } catch (e) {} }
+    if (termState.term) { try { termState.term.dispose(); } catch (e) {} }
+    termState.term = termState.fit = termState.ws = termState.ro = termState.nid = null;
+    termHost.style.display = 'none';
+    termHost.innerHTML = '';
+    termOpenBtn.style.display = 'inline-block';
+    termCloseBtn.style.display = 'none';
+    setTermStatus('not connected');
+  }
+
+  termOpenBtn.onclick = () => { if (selectedNodeId) openTerminal(selectedNodeId); };
+  termCloseBtn.onclick = closeTerminal;
 
   // ── Renderers ───────────────────────────────────────────────────────
   // Global status bar: the "is everything ok?" layer. One dot + word, the
@@ -1486,6 +1629,197 @@ table.inc .dur {{ color: var(--accent-light); font-variant-numeric:tabular-nums;
 
 
 # ---------------------------------------------------------------------------
+# Interactive shell WebSocket relays
+#
+# The browser speaks the same 1-byte-tag framing as the SHELL_ALPN wire
+# protocol (see engine.py): 0x00 data, 0x01 resize (>HH rows,cols), 0x02 close,
+# 0x03 exit (>i code). The relay forwards frames verbatim — it never decodes
+# terminal bytes (xterm.js owns UTF-8 reassembly).
+# ---------------------------------------------------------------------------
+
+def _serve_peer_shell(ws, engine, nid: str) -> None:
+    """Relay a browser WebSocket to a peer shell over SHELL_ALPN.
+
+    Full-duplex needs two threads because flask-sock's ``ws.receive()`` blocks:
+    this handler thread pumps browser→peer, a relay thread pumps peer→browser.
+    """
+    import asyncio as _asyncio
+    from src.engine import SHELL_TAG_DATA, SHELL_TAG_EXIT
+
+    loop = getattr(engine, "loop", None)
+    if loop is None or not loop.is_running():
+        try:
+            ws.send(bytes([SHELL_TAG_DATA]) + b"\r\nengine loop unavailable\r\n")
+        except Exception:  # noqa: BLE001 S110
+            pass
+        ws.close()
+        return
+
+    try:
+        fut = _asyncio.run_coroutine_threadsafe(engine.open_peer_shell(nid), loop)
+        session = fut.result(timeout=35)
+    except Exception as exc:  # noqa: BLE001
+        msg = exc.message() if hasattr(exc, "message") else str(exc)
+        try:
+            ws.send(bytes([SHELL_TAG_DATA]) + f"\r\nshell error: {msg}\r\n".encode())
+        except Exception:  # noqa: BLE001 S110
+            pass
+        ws.close()
+        return
+
+    def _peer_to_browser() -> None:
+        try:
+            while True:
+                frame = session.recv()
+                if frame is None:
+                    break
+                ws.send(bytes(frame))
+                if frame and frame[0] == SHELL_TAG_EXIT:
+                    break
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[webapp] shell relay ended: {}", exc)
+        finally:
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001 S110
+                pass
+
+    relay = threading.Thread(target=_peer_to_browser, name="shell-relay", daemon=True)
+    relay.start()
+    try:
+        while True:
+            msg = ws.receive()
+            if msg is None:
+                break
+            if isinstance(msg, str):
+                msg = msg.encode("utf-8")
+            if msg:
+                session.send(msg)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[webapp] shell ws receive ended: {}", exc)
+    finally:
+        session.close()
+        relay.join(timeout=5)
+
+
+def _serve_local_shell(ws, engine) -> None:
+    """Spawn a PTY bash on THIS node and relay it to the browser directly.
+
+    No iroh round-trip (a node can't dial itself), so the pty lives entirely in
+    Flask threads: a reader thread pumps pty→browser, this thread pumps
+    browser→pty. Mirrors the SHELL_ALPN framing.
+    """
+    import os as _os
+    import pty as _pty
+    import select as _select
+    import signal as _signal
+    import struct as _struct
+    import subprocess as _subprocess
+    import fcntl as _fcntl
+    import termios as _termios
+    from src.engine import (
+        SHELL_TAG_DATA, SHELL_TAG_RESIZE, SHELL_TAG_CLOSE, SHELL_TAG_EXIT,
+    )
+
+    master_fd, slave_fd = _pty.openpty()
+    env = {**_os.environ, "TERM": "xterm-256color"}
+    try:
+        proc = _subprocess.Popen(
+            ["/bin/bash", "-i"],
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            start_new_session=True, env=env, close_fds=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _os.close(master_fd)
+        _os.close(slave_fd)
+        try:
+            ws.send(bytes([SHELL_TAG_DATA]) + f"\r\nshell error: {exc}\r\n".encode())
+        except Exception:  # noqa: BLE001 S110
+            pass
+        ws.close()
+        return
+    _os.close(slave_fd)
+
+    stop = threading.Event()
+
+    def _pty_to_browser() -> None:
+        try:
+            while not stop.is_set():
+                r, _, _ = _select.select([master_fd], [], [], 0.5)
+                if master_fd in r:
+                    try:
+                        data = _os.read(master_fd, 65536)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    ws.send(bytes([SHELL_TAG_DATA]) + data)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[webapp] local shell reader ended: {}", exc)
+        finally:
+            rc = proc.poll()
+            try:
+                ws.send(bytes([SHELL_TAG_EXIT]) + _struct.pack(">i", rc if rc is not None else -1))
+            except Exception:  # noqa: BLE001 S110
+                pass
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001 S110
+                pass
+
+    reader = threading.Thread(target=_pty_to_browser, name="shell-local", daemon=True)
+    reader.start()
+    try:
+        while True:
+            msg = ws.receive()
+            if msg is None:
+                break
+            if isinstance(msg, str):
+                msg = msg.encode("utf-8")
+            if not msg:
+                continue
+            tag, body = msg[0], msg[1:]
+            if tag == SHELL_TAG_DATA:
+                _os.write(master_fd, body)
+            elif tag == SHELL_TAG_RESIZE and len(body) >= 4:
+                rows, cols = _struct.unpack(">HH", body[:4])
+                try:
+                    _fcntl.ioctl(
+                        master_fd, _termios.TIOCSWINSZ,
+                        _struct.pack("HHHH", rows, cols, 0, 0),
+                    )
+                except OSError:  # noqa: BLE001 S110
+                    pass
+            elif tag == SHELL_TAG_CLOSE:
+                break
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[webapp] local shell ws ended: {}", exc)
+    finally:
+        stop.set()
+        try:
+            if proc.poll() is None:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+        except Exception:  # noqa: BLE001 S110
+            pass
+        try:
+            proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001
+            try:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+            except Exception:  # noqa: BLE001 S110
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:  # noqa: BLE001 S110
+                pass
+        try:
+            _os.close(master_fd)
+        except Exception:  # noqa: BLE001 S110
+            pass
+        reader.join(timeout=2)
+
+
+# ---------------------------------------------------------------------------
 # WebApp class
 # ---------------------------------------------------------------------------
 
@@ -1497,6 +1831,7 @@ class WebApp:
         self._port = port
         self._thread: Optional[threading.Thread] = None
         self._app: Optional["Flask"] = None
+        self._sock = None  # flask_sock.Sock, set in start() when available
         # Bound to ``make_server`` so ``stop()`` can call ``shutdown()`` and
         # actually drain in-flight handlers before the engine closes its
         # SQLite stores.
@@ -1635,6 +1970,25 @@ class WebApp:
                 return jsonify({"error": "timed out fetching logs from peer"}), 504
             except Exception as exc:
                 return jsonify({"error": str(exc)[:300]}), 500
+
+        # --- Interactive remote shell (WebSocket) --------------------------
+        if _SOCK_OK:
+            self._sock = Sock(self._app)
+
+            @self._sock.route("/api/node/<nid>/shell")
+            def node_shell(ws, nid):
+                from src.identity import validate_node_id
+                if not validate_node_id(nid):
+                    ws.close()
+                    return
+                if nid == engine.node_id:
+                    _serve_local_shell(ws, engine)
+                    return
+                _serve_peer_shell(ws, engine, nid)
+        else:
+            logger.warning(
+                "[webapp] flask-sock not installed — remote shell terminal disabled"
+            )
 
         # Bind to localhost only — the dashboard has no auth.
         self._server = make_server("127.0.0.1", self._port, self._app, threaded=True)

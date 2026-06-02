@@ -99,6 +99,9 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--revoke-peer", type=str, metavar="NODE_ID", help="Revoke a peer (append revoke_peer op to the log)")
     mode.add_argument("--list-peers", action="store_true", help="List trusted peers (no password required)")
 
+    mode.add_argument("--set-permissions", nargs=2, metavar=("TARGET", "CSV"),
+                      help="Replace a peer's permissions (alias or NodeID). REPLACES the full set -- "
+                           "CSV from: monitor,view_dashboard,shell,chat,split,call,drop")
     mode.add_argument("--set-tags", nargs=2, metavar=("TARGET", "CSV"), help="Replace a peer's tags (alias or NodeID)")
     mode.add_argument("--add-tag", nargs=2, metavar=("TARGET", "TAG"), help="Add a tag to a peer")
     mode.add_argument("--remove-tag", nargs=2, metavar=("TARGET", "TAG"), help="Remove a tag from a peer")
@@ -123,7 +126,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging (default: INFO)")
     parser.add_argument("--alias", type=str, default=None, help="Friendly name for --add-peer")
-    parser.add_argument("--permissions", type=str, default="monitor", help="Comma-separated permissions for --add-peer: monitor,view_dashboard,chat,split,call,drop")
+    parser.add_argument("--permissions", type=str, default="monitor", help="Comma-separated permissions for --add-peer: monitor,view_dashboard,shell,chat,split,call,drop")
     parser.add_argument("--tags", type=str, default=None, help="Comma-separated tags for --add-peer")
     parser.add_argument("--filter-tag", type=str, default=None, help="Filter --list-peers by tag")
     parser.add_argument("--interval", type=int, default=30, help="Heartbeat interval in seconds (default: 30)")
@@ -684,6 +687,40 @@ def cli_main() -> None:
             print(f"Peer trusted: {args.alias or args.add_peer[:12]}  permissions={perms}{tag_str}")
         else:
             print(f"Peer {args.add_peer[:12]} is already trusted (or permissions were invalid).")
+        return
+
+    # --- Permissions ------------------------------------------------------
+    if args.set_permissions:
+        configure_logging(debug=args.debug)
+        target_raw, csv = args.set_permissions
+        perms = [p.strip() for p in csv.split(",") if p.strip()]
+
+        # Socket path -----------------------------------------------------
+        if _via_socket():
+            try:
+                # Resolve alias -> node_id via the daemon's peer list.
+                resp = control_client.get("/v1/peers")
+                idx = {p["node_id"]: p for p in resp.get("peers", [])}
+                alias_idx = {p["alias"]: p["node_id"] for p in resp.get("peers", []) if p.get("alias")}
+                target_nid = target_raw if target_raw in idx else alias_idx.get(target_raw)
+                if target_nid is None:
+                    print(f"Error: unknown peer '{target_raw}'"); sys.exit(1)
+                control_client.put(f"/v1/peers/{target_nid}/perms", {"permissions": perms})
+                print(f"Permissions for {target_raw} set to {perms}")
+                return
+            except control_client.ControlClientError as exc:
+                sys.exit(_socket_err(exc))
+
+        # Direct fallback -------------------------------------------------
+        seed, node_id = _unlock_or_exit(args.identity, args.identity_meta)
+        _log, trust = _build_trust(seed, node_id, args.log_path, args.peers)
+        target_nid, err = trust.resolve_target(target_raw)
+        if err:
+            print(f"Error: {err}"); sys.exit(1)
+        if trust.update_permissions(target_nid, perms):
+            print(f"Permissions for {target_raw} set to {perms}")
+        else:
+            print("Failed to set permissions (peer missing, revoked, or invalid perms).")
         return
 
     # --- Tags (Slice C) ---------------------------------------------------

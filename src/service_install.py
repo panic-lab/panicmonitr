@@ -234,7 +234,8 @@ def install_service(
         print("Enter the identity password to store in the OS keyring.")
         password = _prompt_password()
         try:
-            keyring.set_password("panic-monitor", "identity", password)
+            import os
+            keyring.set_password("panic-monitor", str(os.geteuid()), password)
             print("Password successfully stored in keyring.")
         except Exception as exc:
             print(f"Failed to store password in keyring: {exc}", file=sys.stderr)

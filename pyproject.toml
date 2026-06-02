@@ -21,6 +21,8 @@ dependencies = [
     "psutil>=5.9",
     "docker>=7.0",
     "flask>=3.0",
+    "flask-sock>=0.7",
+    "simple-websocket>=1.0",
     "plotly>=5.20",
     "keyring>=25.0",
 ]

@@ -22,7 +22,7 @@ from src.log import (
 )
 
 VALID_PROTOCOLS = frozenset(
-    {"monitor", "chat", "split", "call", "drop", "view_dashboard"}
+    {"monitor", "chat", "split", "call", "drop", "view_dashboard", "shell"}
 )
 DEFAULT_PEER_TRUST_PATH = paths.default_peers_path()
 

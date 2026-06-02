@@ -29,6 +29,12 @@ OP_ADD_PEER_ALIAS = "add_peer_alias"
 OP_MONITOR_DOWN = "monitor_down"
 OP_MONITOR_UP = "monitor_up"
 
+# Remote-shell audit events. Signed by the *host* being shelled into — a
+# tamper-evident record of who opened an interactive session and when. Like
+# the monitor_* ops these are event records, not peer-relationship state.
+OP_SHELL_OPEN = "shell_open"
+OP_SHELL_CLOSE = "shell_close"
+
 # Slice C additions.
 OP_SET_TAGS = "set_tags"
 OP_SET_MAINTENANCE = "set_maintenance"
@@ -44,6 +50,8 @@ OP_TYPES = frozenset(
         OP_ADD_PEER_ALIAS,
         OP_MONITOR_DOWN,
         OP_MONITOR_UP,
+        OP_SHELL_OPEN,
+        OP_SHELL_CLOSE,
         OP_SET_TAGS,
         OP_SET_MAINTENANCE,
         OP_CLEAR_MAINTENANCE,

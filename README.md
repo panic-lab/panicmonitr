@@ -93,6 +93,9 @@ panic-monitor --list-peers
 panic-monitor --list-peers --filter-tag prod
 panic-monitor --revoke-peer <NODE_ID>        # signed op, auditable
 
+# Change permissions of an existing peer (REPLACES the full set, signed op)
+panic-monitor --set-permissions api-server "monitor,shell"
+
 # Tags
 panic-monitor --set-tags api-server "prod,db"
 panic-monitor --add-tag api-server staging
@@ -116,11 +119,40 @@ Per-peer, per-protocol, granted on your trust log:
 |---|---|
 | `monitor` | Everything -- probing, stats, container logs, push, sync. Default. |
 | `view_dashboard` | Dashboard + container-logs only (no probe target). |
+| `shell` | Interactive remote `bash` via the dashboard terminal. |
 | `chat` / `split` / `call` / `drop` | Reserved for future PanicLab protocols. |
 
 All ALPN handlers that need `view_dashboard` also accept `monitor` as
 fallback. The default `monitor` permission is sufficient for the full
-feature set.
+feature set **except the remote shell**.
+
+### Remote shell (`shell`)
+
+The dashboard terminal lets you open a live PTY-backed `bash` on a peer --
+arrow keys, `vim`/`top`, tab-completion, resize. This is effectively
+authenticated RCE into that node, so it is **strictly default-deny**:
+
+- A peer can open a shell on you **only** if you granted them the `shell`
+  permission. It is **not** implied by `monitor` or `view_dashboard` (no
+  fallback). The `*` wildcard *does* grant it -- avoid `*` if you don't want
+  shell exposure.
+- The HTTP/WebSocket surface is loopback-only and unauthenticated, same as the
+  rest of the dashboard -- anyone with access to `:42069` on your machine can
+  drive shells into peers that granted you `shell`.
+- Every session is recorded as a signed, tamper-evident `shell_open` /
+  `shell_close` op in the **host's** trust log (`log.jsonl`).
+- Under system-mode systemd the spawned shell inherits the unit's sandbox
+  (`ProtectSystem=strict`, `ProtectHome=yes`, `SystemCallFilter=@system-service`)
+  and runs as the daemon user; user-mode installs are unsandboxed.
+
+```fish
+# Let api-server open shells on this node (grant at add time)
+panic-monitor --add-peer <NODE_ID> --alias api-server --permissions monitor,shell
+
+# Or grant shell to a peer you already trust. --set-permissions REPLACES the
+# full set, so include the perms you want to keep (e.g. monitor):
+panic-monitor --set-permissions api-server "monitor,shell"
+```
 
 ---
 
