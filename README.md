@@ -132,6 +132,10 @@ The dashboard terminal lets you open a live PTY-backed `bash` on a peer --
 arrow keys, `vim`/`top`, tab-completion, resize. This is effectively
 authenticated RCE into that node, so it is **strictly default-deny**:
 
+<p align="center">
+  <img src="assets/remote-command-execution.png" alt="Remote command execution — a live PTY-backed bash session on a peer (running neofetch) driven from the dashboard terminal panel over iroh" width="900">
+</p>
+
 - A peer can open a shell on you **only** if you granted them the `shell`
   permission. It is **not** implied by `monitor` or `view_dashboard` (no
   fallback). The `*` wildcard *does* grant it -- avoid `*` if you don't want
