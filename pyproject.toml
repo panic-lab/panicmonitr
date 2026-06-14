@@ -1,6 +1,6 @@
 [project]
 name = "panic-monitor"
-version = "0.1.0"
+dynamic = ["version"]
 description = "P2P health monitoring daemon for the PanicLab ecosystem"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -27,11 +27,18 @@ dependencies = [
     "keyring>=25.0",
 ]
 
+[project.optional-dependencies]
+# Tooling for producing the self-contained release binary (see panic-monitor.spec).
+build = ["pyinstaller>=6.0"]
+
 [project.scripts]
 panic-monitor = "main:cli_main"
 
 [tool.setuptools]
 py-modules = ["main"]
+
+[tool.setuptools.dynamic]
+version = { attr = "src.__about__.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["src*"]

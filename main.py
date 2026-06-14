@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from src import IST, paths
 from src import control_client
+from src.__about__ import __version__
 from src.engine import MonitorEngine
 from src.history import (
     DEFAULT_RETAIN_DAYS,
@@ -123,6 +124,11 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--uninstall-service", action="store_true", help="Disable and remove the systemd unit")
     mode.add_argument("--migrate", action="store_true", help="Copy state files from legacy locations (CWD, /etc, /var/lib) into XDG paths")
     mode.add_argument("--rotate-credential", action="store_true", help="Re-encrypt the stored credential under the current backend (does not touch the seed)")
+    # Hidden: import + exercise native deps and exit 0. Used by CI to verify a
+    # frozen onefile binary actually bundled its compiled extensions.
+    mode.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
+
+    parser.add_argument("--version", action="version", version=f"panic-monitor {__version__}")
 
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging (default: INFO)")
     parser.add_argument("--alias", type=str, default=None, help="Friendly name for --add-peer")
@@ -390,8 +396,60 @@ async def run_fetch_dashboard(engine: MonitorEngine, target: str) -> int:
 # Entry
 # ---------------------------------------------------------------------------
 
+def _run_selftest() -> None:
+    """Import and lightly exercise every native/optional dependency, then exit 0.
+
+    A frozen onefile build can succeed yet ship a broken bundle if a compiled
+    extension (above all iroh's ``libiroh_ffi.so``) was not collected. Importing
+    ``iroh`` loads that shared library at import time, and we touch real native
+    code paths below so a mis-bundled ``.so`` fails loudly instead of at first
+    use. CI runs this against the built binary before publishing a release.
+    """
+    import importlib
+
+    modules = [
+        "iroh",
+        "nacl.signing",
+        "nacl.secret",
+        "argon2.low_level",
+        "psutil",
+        "flask",
+        "flask_sock",
+        "simple_websocket",
+        "apscheduler.schedulers.asyncio",
+        "pydantic",
+        "loguru",
+        "docker",
+        "keyring",
+        "textual",
+    ]
+    for name in modules:
+        importlib.import_module(name)
+
+    # Exercise native code, not just imports.
+    import nacl.signing as _signing
+    import psutil as _psutil
+
+    _signing.SigningKey.generate()
+    _psutil.cpu_percent()
+
+    # The systemd unit template is a bundled data file — confirm it resolves so a
+    # mis-built bundle fails here rather than at `--install-service` time.
+    from src.service_install import TEMPLATE_PATH
+
+    if not TEMPLATE_PATH.exists():
+        print(f"selftest FAILED: service template missing at {TEMPLATE_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+    print("selftest OK")
+    sys.exit(0)
+
+
 def cli_main() -> None:
     args = parse_args()
+
+    if args.selftest:
+        _run_selftest()
 
     # Propagate the password-backend selection down to _prompt_password.
     global _password_backend_override

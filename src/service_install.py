@@ -23,7 +23,22 @@ from loguru import logger
 from src import paths
 
 SERVICE_NAME = "panic-monitor.service"
-TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "panic-monitor.service.tmpl"
+
+
+def _resource_base() -> Path:
+    """Base directory for bundled package resources.
+
+    Under a frozen PyInstaller build, data files are unpacked beneath
+    ``sys._MEIPASS`` (the definitive bundle marker); in a normal install they
+    sit next to this module.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:
+        return Path(meipass) / "src"
+    return Path(__file__).resolve().parent
+
+
+TEMPLATE_PATH = _resource_base() / "templates" / "panic-monitor.service.tmpl"
 
 LEGACY_PATHS = [
     Path.cwd() / "secret.key",
@@ -44,14 +59,18 @@ LEGACY_PATHS = [
 def _resolve_exec_start() -> str:
     """Locate the `panic-monitor` entrypoint to bake into ExecStart.
 
-    Prefers ``shutil.which`` so a venv-installed entry point resolves to its
-    actual absolute path; falls back to ``sys.executable -m main`` if no
-    console script is on PATH.
+    When running as a frozen PyInstaller binary the executable re-invokes
+    itself by its own path — ``sys.executable`` *is* the installed binary, so
+    use it directly. Otherwise prefer ``shutil.which`` so a venv-installed
+    console script resolves to its absolute path, falling back to running
+    ``main.py`` under the active python for a bare source checkout.
     """
+    if getattr(sys, "frozen", False):
+        return os.path.realpath(sys.executable)
     found = shutil.which("panic-monitor")
     if found:
         return found
-    # Fallback: invoke main.py via the active python.
+    # Fallback: invoke main.py via the active python (source checkout).
     return f"{sys.executable} {Path(__file__).resolve().parent.parent / 'main.py'}"
 
 

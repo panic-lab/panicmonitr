@@ -1,0 +1,93 @@
+name: release
+
+# Build self-contained binaries for Linux x86_64 + aarch64 and publish them to
+# a GitHub Release whenever a version tag (vX.Y.Z) is pushed.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Binaries are built on Ubuntu 22.04 (glibc 2.35), so the resulting executables
+# require glibc >= 2.35 (Debian 12+, Ubuntu 22.04+, Fedora 36+). To support
+# older distros, build inside a manylinux_2_28 container instead.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the release and upload assets
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          printf '__version__ = "%s"\n' "$VERSION" > src/__about__.py
+          echo "Building panic-monitor ${VERSION} for ${{ matrix.arch }}"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+
+      - name: Build onefile binary
+        run: pyinstaller --clean --noconfirm panic-monitor.spec
+
+      - name: Smoke-test the frozen binary
+        run: |
+          ./dist/panic-monitor --version
+          ./dist/panic-monitor --selftest
+
+      - name: Stage release asset
+        run: |
+          install -Dm755 dist/panic-monitor "out/panic-monitor-linux-${{ matrix.arch }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panic-monitor-linux-${{ matrix.arch }}
+          path: out/panic-monitor-linux-${{ matrix.arch }}
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums.txt
+        run: |
+          cd dist
+          sha256sum panic-monitor-linux-x86_64 panic-monitor-linux-aarch64 > checksums.txt
+          cat checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/panic-monitor-linux-x86_64
+            dist/panic-monitor-linux-aarch64
+            dist/checksums.txt
+          generate_release_notes: true
