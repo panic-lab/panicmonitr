@@ -532,9 +532,7 @@ corresponding source.
 **Commercial licensing.** If you can't meet the AGPL's terms -- e.g. you want to
 embed Panic Monitor in a closed-source product, or offer it as a managed service
 without releasing your source -- a separate commercial license is available.
-Open an issue or contact the maintainer to discuss terms.
-
-<!-- TODO: replace with your commercial-licensing contact email -->
+Contact **paniclab.node@proton.me** to discuss terms.
 
 > Individuals and homelabbers: use it freely under the AGPL, forever.
 > Companies that can't comply with the AGPL: reach out for a commercial license.
