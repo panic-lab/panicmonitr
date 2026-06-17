@@ -1,5 +1,9 @@
 # Panic Monitor
 
+<p align="center">
+  <img src="assets/panicmonitr-logo.svg" alt="PanicMonitr" width="560">
+</p>
+
 > Sovereign, peer-to-peer health monitoring for your homelab -- no central
 > server, no open ports, no cloud. Free and open source.
 

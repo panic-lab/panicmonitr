@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="458" height="88" viewBox="0 0 458 88" role="img" aria-label="PanicMonitr">
+  <title>PanicMonitr</title>
+  <defs>
+    <linearGradient id="pm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#dc8228"/>
+      <stop offset="1" stop-color="#f8a83e"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#pm)" shape-rendering="crispEdges">
+    <rect x="14" y="14" width="30" height="10"/>
+    <rect x="54" y="14" width="30" height="10"/>
+    <rect x="94" y="14" width="10" height="10"/>
+    <rect x="124" y="14" width="10" height="10"/>
+    <rect x="144" y="14" width="10" height="10"/>
+    <rect x="164" y="14" width="30" height="10"/>
+    <rect x="204" y="14" width="20" height="10"/>
+    <rect x="234" y="14" width="20" height="10"/>
+    <rect x="264" y="14" width="30" height="10"/>
+    <rect x="304" y="14" width="10" height="10"/>
+    <rect x="334" y="14" width="10" height="10"/>
+    <rect x="354" y="14" width="10" height="10"/>
+    <rect x="374" y="14" width="30" height="10"/>
+    <rect x="414" y="14" width="30" height="10"/>
+    <rect x="14" y="24" width="10" height="10"/>
+    <rect x="34" y="24" width="10" height="10"/>
+    <rect x="54" y="24" width="10" height="10"/>
+    <rect x="74" y="24" width="10" height="10"/>
+    <rect x="94" y="24" width="20" height="10"/>
+    <rect x="124" y="24" width="10" height="10"/>
+    <rect x="144" y="24" width="10" height="10"/>
+    <rect x="164" y="24" width="10" height="10"/>
+    <rect x="204" y="24" width="10" height="10"/>
+    <rect x="224" y="24" width="10" height="10"/>
+    <rect x="244" y="24" width="10" height="10"/>
+    <rect x="264" y="24" width="10" height="10"/>
+    <rect x="284" y="24" width="10" height="10"/>
+    <rect x="304" y="24" width="20" height="10"/>
+    <rect x="334" y="24" width="10" height="10"/>
+    <rect x="354" y="24" width="10" height="10"/>
+    <rect x="384" y="24" width="10" height="10"/>
+    <rect x="414" y="24" width="10" height="10"/>
+    <rect x="434" y="24" width="10" height="10"/>
+    <rect x="14" y="34" width="30" height="10"/>
+    <rect x="54" y="34" width="30" height="10"/>
+    <rect x="94" y="34" width="10" height="10"/>
+    <rect x="114" y="34" width="20" height="10"/>
+    <rect x="144" y="34" width="10" height="10"/>
+    <rect x="164" y="34" width="10" height="10"/>
+    <rect x="204" y="34" width="10" height="10"/>
+    <rect x="224" y="34" width="10" height="10"/>
+    <rect x="244" y="34" width="10" height="10"/>
+    <rect x="264" y="34" width="10" height="10"/>
+    <rect x="284" y="34" width="10" height="10"/>
+    <rect x="304" y="34" width="10" height="10"/>
+    <rect x="324" y="34" width="20" height="10"/>
+    <rect x="354" y="34" width="10" height="10"/>
+    <rect x="384" y="34" width="10" height="10"/>
+    <rect x="414" y="34" width="20" height="10"/>
+    <rect x="14" y="44" width="10" height="10"/>
+    <rect x="54" y="44" width="10" height="10"/>
+    <rect x="74" y="44" width="10" height="10"/>
+    <rect x="94" y="44" width="10" height="10"/>
+    <rect x="124" y="44" width="10" height="10"/>
+    <rect x="144" y="44" width="10" height="10"/>
+    <rect x="164" y="44" width="30" height="10"/>
+    <rect x="204" y="44" width="10" height="10"/>
+    <rect x="244" y="44" width="10" height="10"/>
+    <rect x="264" y="44" width="30" height="10"/>
+    <rect x="304" y="44" width="10" height="10"/>
+    <rect x="334" y="44" width="10" height="10"/>
+    <rect x="354" y="44" width="10" height="10"/>
+    <rect x="384" y="44" width="10" height="10"/>
+    <rect x="414" y="44" width="10" height="10"/>
+    <rect x="434" y="44" width="10" height="10"/>
+    <rect x="14" y="54" width="10" height="10"/>
+    <rect x="54" y="54" width="10" height="10"/>
+    <rect x="74" y="54" width="10" height="10"/>
+    <rect x="94" y="54" width="10" height="10"/>
+    <rect x="124" y="54" width="10" height="10"/>
+    <rect x="144" y="54" width="10" height="10"/>
+    <rect x="164" y="54" width="30" height="10"/>
+    <rect x="204" y="54" width="10" height="10"/>
+    <rect x="244" y="54" width="10" height="10"/>
+    <rect x="264" y="54" width="30" height="10"/>
+    <rect x="304" y="54" width="10" height="10"/>
+    <rect x="334" y="54" width="10" height="10"/>
+    <rect x="354" y="54" width="10" height="10"/>
+    <rect x="384" y="54" width="10" height="10"/>
+    <rect x="414" y="54" width="10" height="10"/>
+    <rect x="434" y="54" width="10" height="10"/>
+  </g>
+</svg>
