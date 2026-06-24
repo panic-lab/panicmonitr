@@ -6,4 +6,4 @@ so a metadata lookup would raise ``PackageNotFoundError``. CI overwrites this
 file from the git tag at build time (see ``.github/workflows/release.yml``).
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

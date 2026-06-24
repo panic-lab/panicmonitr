@@ -9,6 +9,8 @@ import pty
 import struct
 import tempfile
 import termios
+import threading
+import tty
 import unittest
 from pathlib import Path
 
@@ -17,8 +19,8 @@ import fcntl
 import nacl.encoding
 import nacl.signing
 
-from src.engine import (
-    MonitorEngine,
+from src.engine import MonitorEngine
+from src.alpn.framing import (
     SHELL_TAG_CLOSE,
     SHELL_TAG_DATA,
     SHELL_TAG_EXIT,
@@ -127,6 +129,77 @@ class ShellInputPumpTests(unittest.IsolatedAsyncioTestCase):
         finally:
             os.close(master_fd)
             os.close(slave_fd)
+
+
+class ShellLargePasteTests(unittest.IsolatedAsyncioTestCase):
+    """Regression: a large client paste must be written to the non-blocking PTY
+    master in full, not silently truncated (short os.write) or dropped by a
+    BlockingIOError that kills the input pump. Exercises ``_pty_write_all``."""
+
+    async def test_large_paste_is_fully_delivered(self) -> None:
+        master_fd, slave_fd = pty.openpty()
+        # Raw slave: no canonical-mode MAX_CANON cap and no \n→\r\n translation,
+        # so the bytes pass through untouched AND the write actually fills the
+        # kernel buffer, triggering EAGAIN on the non-blocking master.
+        tty.setraw(slave_fd)
+        # Non-blocking master, exactly as _serve_shell configures it (shell.py:244).
+        os.set_blocking(master_fd, False)
+
+        payload = os.urandom(256 * 1024)  # >> PTY buffer → many EAGAIN cycles
+        received = bytearray()
+        drainer_done = threading.Event()
+
+        def _drain() -> None:
+            # Concurrently drain the slave so the master keeps becoming writable;
+            # without this the buffer fills and the writer correctly waits forever.
+            # Stop once every byte is read — NOT on EOF: closing the master to force
+            # EOF can discard data still buffered in the PTY (a lost-bytes race that
+            # flaked under load).
+            try:
+                while len(received) < len(payload):
+                    chunk = os.read(slave_fd, 65536)
+                    if not chunk:
+                        break  # unexpected EOF → lost bytes; join() assertion catches it
+                    received.extend(chunk)
+            except OSError:
+                pass
+            finally:
+                drainer_done.set()
+
+        drainer = threading.Thread(target=_drain, name="pty-drain", daemon=True)
+        drainer.start()
+        try:
+            buf = (
+                _framed(bytes([SHELL_TAG_DATA]) + payload)
+                + _framed(bytes([SHELL_TAG_CLOSE]))
+            )
+            stop = asyncio.Event()
+            await asyncio.wait_for(
+                MonitorEngine._shell_stream_to_pty(
+                    object(), _FakeRecvStream(buf), master_fd, stop, [0.0], "test"
+                ),
+                timeout=30,
+            )
+            self.assertTrue(stop.is_set())
+            # The drainer self-terminates once it has all bytes; no need to close
+            # the master first (which could drop data still buffered in the PTY).
+            drainer.join(timeout=10)
+            self.assertTrue(
+                drainer_done.is_set(), "drainer did not finish — bytes were lost"
+            )
+        finally:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+            try:
+                os.close(slave_fd)
+            except OSError:
+                pass
+
+        # Every byte arrived, in order, unmodified — and the pump didn't crash.
+        self.assertEqual(len(received), len(payload))
+        self.assertEqual(bytes(received), payload)
 
 
 class ShellOutputPumpTests(unittest.IsolatedAsyncioTestCase):

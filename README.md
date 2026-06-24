@@ -537,7 +537,7 @@ lines. To verify the rebuild path manually:
 restored). Upstream fix tracked in
 [docs/network-resilience-roadmap.md](docs/network-resilience-roadmap.md).
 
-**Invalid Node ID** -- Node IDs are Curve25519 public keys. Use the value
+**Invalid Node ID** -- Node IDs are Ed25519 public keys. Use the value
 from `--show-identity`, not a hand-typed hex string.
 
 **Wipe and start fresh:**

@@ -1968,7 +1968,7 @@ def _serve_peer_shell(ws, engine, nid: str) -> None:
     this handler thread pumps browser→peer, a relay thread pumps peer→browser.
     """
     import asyncio as _asyncio
-    from src.engine import SHELL_TAG_DATA, SHELL_TAG_EXIT
+    from src.alpn.framing import SHELL_TAG_DATA, SHELL_TAG_EXIT
 
     loop = getattr(engine, "loop", None)
     if loop is None or not loop.is_running():
@@ -2041,7 +2041,7 @@ def _serve_local_shell(ws, engine) -> None:
     import subprocess as _subprocess
     import fcntl as _fcntl
     import termios as _termios
-    from src.engine import (
+    from src.alpn.framing import (
         SHELL_TAG_DATA, SHELL_TAG_RESIZE, SHELL_TAG_CLOSE, SHELL_TAG_EXIT,
     )
 
